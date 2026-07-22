@@ -1,0 +1,29 @@
+# ------------------------------
+# Configuration Bochs - Test BIOS custom
+# ------------------------------
+
+cpu: count=1, ips=1000000
+
+megs: 1
+
+# ------------------------------
+# romimage: file="bios1.bin", address=0xfc000
+romimage: file=$BXSHARE/BIOS-bochs-legacy
+# romimage: file="bios_xt.bin", address=0xfc000
+# romimage: file="bios_pc.bin", address=0xfe000
+vgaromimage: file=$BXSHARE/VGABIOS-lgpl-latest.bin
+optromimage1: file=extra_rom.bin, address=0xd0000
+# ------------------------------
+
+floppya: type=none
+ata0: enabled=0
+
+display_library: win32
+
+log: bochsout.txt
+panic: action=ask
+error: action=report
+info: action=ignore
+debug: action=ignore
+
+clock: sync=none, time0=local

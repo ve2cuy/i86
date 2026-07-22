@@ -1,0 +1,45 @@
+1 - installation de WinASM -> http://www.winasm.net/developing-applications-quick-start.html
+	(user:puyansude, password99)
+
+2 - Installation de MASM32SDK -> http://www.masm32.com/
+
+3 - Installer Notepad++ -> http://download.cnet.com/Notepad/3000-2352_4-10327521.html
+	3.1 - Installer le plugin HexEditor
+4 - 
+
+---
+
+Détails du projet:
+
+ROM
+
+	Le BIOS est placé dans un 27128 (16k)
+
+	16k = 0x3FFF = 0b11 1111 1111 1111, 
+		localisé de 0xFFFFF à 0xFC000, 	0b 1111 1111 1111 1111 1111 
+						0b 1111 1100 0000 0000 0000
+
+RAM
+
+	CY7C199C - 256K (32K x 8) Static RAM
+
+	32k = 0x7FFF = 0b111 1111 1111 1111
+		localisé de 0x0000 à 0x7FFF, 	0b 0000	0111 1111 1111 1111
+						0b 0000 0000 0000 0000 0000
+
+CPU
+
+	Le 8088 démarre à l'adresse 0xFFFF0.
+
+	Il faut donc placer les premières instructions à 0x3FF0 du ROM.
+
+	Note, org 3DF0h = Ajustement pour le model 'tiny' org 100h
+
+
+26 juin 2010
+
+	Première version
+	'Tracer' LED via un buffer 74LS373
+		IO 	= OK
+		RD_ROM 	= OK
+		RD_RAM  = OK
