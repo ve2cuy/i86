@@ -4,7 +4,8 @@
 ;  .\build_rom.bat .\extra_rom
 ; 
 ; À tester sous bochs avec la commande 
-;  bochs -f bochsrc.bxrc -q
+; $Env:PATH += ";C:\Program Files\Bochs-3.0\"
+; bochs -f bochsrc.bxrc -q
 ; ----------------------------------------------------
 ; M-A-J: 2026.07.22
 ; ----------------------------------------------------
@@ -62,6 +63,7 @@ EntryPoint:                            ; offset 3 : point d'entrée obligatoire
     ;MOV     SI, OFFSET MSG
     ;CALL    PrintString
     PRINT_AT OFFSET MSG, 10, 20, ATTR_OK
+    PRINT_AT OFFSET MSG_ROUGE, 12, 10, ATTR_ALERT
 
     POP     ES
     POP     DS
@@ -113,7 +115,9 @@ Cls_loop:
 Cls ENDP
 
 
-MSG     DB      'Hello depuis Option ROM!', 0
+MSG         DB      'Hello depuis Option ROM!', 0
+MSG_ROUGE   DB      'Je suis un message JAUNE sur fond ROUGE ;-)', 0
+
 
     ; Padding jusqu'à la taille totale déclarée, moins 1 octet pour le checksum
     ORG     (ROM_SIZE_BLOCKS * 512) - 1

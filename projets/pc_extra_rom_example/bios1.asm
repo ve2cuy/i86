@@ -1,3 +1,6 @@
+; ==========================================
+; Ne fonctionne pas sous bochs
+
 .MODEL TINY
 .CODE
 ORG 0

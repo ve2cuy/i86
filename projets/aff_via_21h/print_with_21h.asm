@@ -1,6 +1,6 @@
 ; Pour compiler le programme, utilisez la commande suivante :
-; ..\..\bin\JWasm.exe -bin .\print_with_21h.asm
-; ren .\print_with_21h.BIN .\print_with_21h.com 
+; ..\..\bin\JWasm.exe -bin -Fo  .\print_with_21h.com  .\print_with_21h.asm
+
 ; Utiliser DOSBox-X pour exécuter le programme .com généré.
 .MODEL TINY
 .CODE
