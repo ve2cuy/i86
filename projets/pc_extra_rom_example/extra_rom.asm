@@ -41,7 +41,7 @@ DEFATTR ATTR_OK,    0Ah, 00h    ; vert sur noir
 ; Signature et point d'entrée d'un BIOS d'extension (Option ROM)
 Signature:
     DB      55h, 0AAh                  ; offset 0-1 : signature
-    DB      ROM_SIZE_BLOCKS             ; offset 2 : taille en blocs de 512 octets
+    DB      ROM_SIZE_BLOCKS            ; offset 2 : taille en blocs de 512 octets
 
 EntryPoint:                            ; offset 3 : point d'entrée obligatoire
     ; Votre code d'initialisation ici
