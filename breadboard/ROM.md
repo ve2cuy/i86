@@ -115,3 +115,6 @@ C'est la période complète (LED allumée + LED éteinte), donc :
 $$f = \frac{1}{T} = \frac{1}{0{,}4426 \text{ s}} \approx \boxed{2{,}26 \text{ Hz}}$$
 
 **Le(s) LED clignote(nt) environ 2,26 fois par seconde**, soit un peu plus de 2 clignotements complets à chaque seconde — visible à l'œil nu, ni trop rapide ni trop lent.
+
+---
+
