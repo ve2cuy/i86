@@ -27,3 +27,91 @@ Ta ROM occupe C0000h-FFFFFh, soit le quart supérieur du méga-octet adressable 
 ## Point de vigilance
 
 Vérifie que **IO/M#** (pin 28 du 8088) ne doit **pas** activer la ROM pendant les cycles d'E/S — dans ce montage, comme le décodage se fait uniquement sur A18/A19 (qui n'existent pas dans l'espace I/O 16 bits séparé du 8088), il n'y a normalement pas de conflit. Mais si ton design utilise des cycles d'E/S 20 bits étendus ou une autre topologie de bus, ajoute **IO/M#** comme troisième entrée du NAND (via porte NAND 3 entrées type `74LS10`) pour garantir CE# actif uniquement en cycle mémoire.
+
+---
+
+Déboguage
+
+```asm
+0C0000 -> 11000000000000000000
+080000 -> 10000000000000000000
+
+Adresse   Code obj.      Ligne   Source
+-------   ---------      -----   ------------------------------
+                            1    ORG     0000h          ; = physique C0000h (début de la ROM)
+                            2
+                            3    START:
+0000      B0 AA             4     MOV     AL, 0AAh       ; AL = 10101010b
+0002      E6 10             5     OUT     10h, AL        ; envoie AL sur le port 10h
+0004      BB 00             6     MOV     BX, 0000h      ; compteur de délai
+                            7    DELAI1:
+0007      4B                8     DEC     BX
+0008      75 FD             9     JNZ     DELAI1
+000A      B0 00            10     MOV     AL, 00h        ; AL = 00000000b
+000C      E6 10            11     OUT     10h, AL
+000E      BB 00            12     MOV     BX, 0000h
+                           13    DELAI2:
+0011      4B               14     DEC     BX
+0012      75 FD            15     JNZ     DELAI2
+0014      EB EA            16     JMP     START          ; boucle infinie
+
+Taille totale du programme : 0016h (22) octets
+```
+
+---
+
+# Calcul de la fréquence de clignotement
+
+Compte tenu du programme précédent, avec une fréquence d'horloge du 8088 à 5,33mhz, à quelle fréquence clignote les LED sur le port 10h?
+
+Pour cela, il faut calculer le nombre de cycles d'horloge (clocks) que prend chaque instruction sur un 8088, puis convertir en temps réel avec la fréquence de 5,33 MHz.
+
+## Temps de cycle de base
+
+$$T_{clock} = \frac{1}{5{,}33 \text{ MHz}} \approx 187{,}6 \text{ ns}$$
+
+## Nombre de cycles par instruction (8088)
+
+| Instruction | Cycles |
+|---|---|
+| `MOV AL, imm8` | 4 |
+| `OUT imm8, AL` | 10 |
+| `MOV BX, imm16` | 4 |
+| `DEC BX` | 2 |
+| `JNZ` (saut pris) | 16 |
+| `JNZ` (saut non pris) | 4 |
+| `JMP` (court) | 15 |
+
+## Calcul de chaque boucle de délai
+
+`MOV BX, 0000h` fait passer BX à FFFFh dès le premier `DEC`, donc la boucle s'exécute **65536 fois** avant que BX ne revienne à 0.
+
+- 65 535 itérations où le saut est **pris** : `(2 + 16) = 18` cycles
+- 1 dernière itération où le saut n'est **pas pris** : `(2 + 4) = 6` cycles
+
+$$\text{Cycles boucle} = 65535 \times 18 + 6 = 1\,179\,636 \text{ cycles}$$
+
+## Total pour un cycle complet (LED ON + LED OFF)
+
+| Section | Cycles |
+|---|---|
+| `MOV AL,0AAh` + `OUT` + `MOV BX,0` | 4+10+4 = 18 |
+| Boucle DELAI1 | 1 179 636 |
+| `MOV AL,00h` + `OUT` + `MOV BX,0` | 4+10+4 = 18 |
+| Boucle DELAI2 | 1 179 636 |
+| `JMP START` | 15 |
+| **Total** | **2 359 323 cycles** |
+
+## Conversion en temps
+
+$$T = \frac{2\,359\,323}{5\,330\,000} \approx 0{,}4426 \text{ s} = 442{,}6 \text{ ms}$$
+
+C'est la période complète (LED allumée + LED éteinte), donc :
+- LED allumée (0AAh sur le port) ≈ **221,3 ms**
+- LED éteinte (00h sur le port) ≈ **221,3 ms**
+
+## Fréquence de clignotement
+
+$$f = \frac{1}{T} = \frac{1}{0{,}4426 \text{ s}} \approx \boxed{2{,}26 \text{ Hz}}$$
+
+**Le(s) LED clignote(nt) environ 2,26 fois par seconde**, soit un peu plus de 2 clignotements complets à chaque seconde — visible à l'œil nu, ni trop rapide ni trop lent.

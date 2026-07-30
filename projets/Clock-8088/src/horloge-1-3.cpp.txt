@@ -1,0 +1,99 @@
+#include <Arduino.h>
+
+/*
+ * Arduino UNO R4 Minima (Renesas RA4M1)
+ * ---------------------------------------------------------------
+ * - Potentiomètre lu sur A2
+ * - Horloge générée sur D8, duty cycle = 1/3 (1/3 à l'état haut, 2/3 à l'état bas)
+ * - La fréquence de l'horloge dépend de la valeur du potentiomètre :
+ *   pot au minimum  -> fréquence basse
+ *   pot au maximum  -> fréquence la plus élevée possible
+ *
+ * IMPORTANT : le RA4M1 n'a pas de registres PORTB/DDRB comme l'ATmega328P
+ * de l'UNO R3. L'écriture de D8 se fait ici par accès direct aux registres
+ * du port Renesas (R_PORTx->POSR / PORR), PAS par digitalWrite().
+ *
+ * POSR (Port Output Set Register)   : met à 1 les bits du port marqués dans le masque
+ * PORR (Port Output Reset Register) : met à 0 les bits du port marqués dans le masque
+ * -> une seule écriture registre, sans lecture-modification-écriture : c'est la
+ *    méthode la plus rapide pour piloter une broche sur ce cœur Arduino_Renesas.
+ *
+ * Le couple (port, bit) réellement utilisé par D8 n'est pas codé en dur : il est
+ * récupéré au démarrage depuis la table interne du cœur (g_pin_cfg), ce qui rend
+ * le code valable aussi bien sur l'UNO R4 Minima que sur l'UNO R4 WiFi (le
+ * brochage interne diffère entre les deux cartes).
+ */
+
+// Table des registres de port disponibles sur le RA4M1
+static R_PORT0_Type * const port_table[] = {
+  R_PORT0, R_PORT1, R_PORT2, R_PORT3,
+  R_PORT4, R_PORT5, R_PORT6, R_PORT7
+};
+
+const uint8_t PIN_HORLOGE = 8;   // D8
+const uint8_t PIN_POT     = A2;  // potentiomètre
+
+R_PORT0_Type *clkPort;  // registre de port réellement associé à D8
+uint16_t      clkMask;  // masque du bit réellement associé à D8
+
+// Bornes de la période de l'horloge, en microsecondes
+const uint32_t PERIODE_MAX_US = 20000UL; // pot au minimum -> ~50 Hz
+const uint32_t PERIODE_MIN_US = 4UL;     // pot au maximum -> fréquence la plus élevée possible
+
+// Intervalle (non critique) auquel on relit le potentiomètre.
+// Le relire à chaque cycle d'horloge fausserait le duty cycle aux hautes
+// fréquences : analogRead() + map() ont un coût fixe qui, ramené à une
+// période très courte, viendrait allonger une des deux phases plus que
+// l'autre. En le sortant de la boucle de temporisation, ce coût ne pèse
+// plus du tout sur la précision du signal généré.
+const uint32_t INTERVALLE_LECTURE_POT_MS = 20UL;
+
+volatile uint32_t tHaut = PERIODE_MAX_US / 3;
+volatile uint32_t tBas  = PERIODE_MAX_US - tHaut;
+
+void setup() {
+  // pinMode() sert uniquement à configurer la direction de la broche.
+  // Ce n'est pas lui qui génère le signal d'horloge (ce n'est pas digitalWrite).
+  pinMode(PIN_HORLOGE, OUTPUT);
+
+  // Récupération, une seule fois, du (port, bit) matériel associé à D8
+  uint16_t hwPortPin = g_pin_cfg[PIN_HORLOGE].pin; // encodé (port << 8) | bit
+  clkPort = port_table[hwPortPin >> 8];
+  clkMask = 1U << (hwPortPin & 0x0F);
+
+  analogReadResolution(10); // 0..1023 (valeur par défaut, explicitée ici)
+}
+
+void loop() {
+  // ---- Partie "lente" : mise à jour occasionnelle de la période ----
+  // Complètement hors du chemin critique de temporisation du signal.
+  static uint32_t derniereMaj = 0;
+  uint32_t maintenant = millis();
+  if ((uint32_t)(maintenant - derniereMaj) >= INTERVALLE_LECTURE_POT_MS) {
+    derniereMaj = maintenant;
+
+    int valPot = analogRead(PIN_POT); // 0 .. 1023
+    // Plus valPot est grand, plus la période est courte -> fréquence plus élevée
+    uint32_t periode_us = map(valPot, 0, 1023, PERIODE_MAX_US, PERIODE_MIN_US);
+
+    tHaut = periode_us / 3;       // 1/3 de la période à l'état haut
+    tBas  = periode_us - tHaut;   // 2/3 de la période à l'état bas
+  }
+
+  // ---- Partie "critique" : génération du signal ----
+  // Ne contient plus que les écritures de registre et les attentes actives :
+  // son coût fixe est constant et négligeable, quelle que soit la fréquence.
+  uint32_t t0;
+
+  clkPort->POSR = clkMask;   // équivalent de digitalWrite(D8, HIGH), en accès direct
+  t0 = micros();
+  while ((uint32_t)(micros() - t0) < tHaut) {
+    // attente active pendant la portion haute du signal
+  }
+
+  clkPort->PORR = clkMask;   // équivalent de digitalWrite(D8, LOW), en accès direct
+  t0 = micros();
+  while ((uint32_t)(micros() - t0) < tBas) {
+    // attente active pendant la portion basse du signal
+  }
+}

@@ -1,6 +1,11 @@
-; ============================================
+; ==============================================
 ; Boot ROM 8088 - 256K, mappée en C0000h-FFFFFh
-; ============================================
+; ----------------------------------------------
+; Testes de la carte breadboard avec un 
+; clignotement d'une LED sur le port 10h
+; La vitesse d'horloge est de 5,33 MHz (XT)
+; À Quelle fréquence clignote la LED ?
+; ==============================================
 
 .MODEL TINY
 .CODE

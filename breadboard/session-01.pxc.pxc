@@ -12,10 +12,10 @@
     "PWM0 Duty": "50",
     "PWM0 EN": 0,
     "PWM0 Freq": "1000",
-    "Sample count": "50176",
-    "Sample rate": "10000",
+    "Sample count": "100352",
+    "Sample rate": "1000000",
     "Stream buff Size": "16",
-    "Threshold Level": "1.9",
+    "Threshold Level": "2.6",
     "Title": "PXView v1.4.9",
     "Using Clock Negedge": 0,
     "Version": 3,
@@ -25,7 +25,7 @@
             "enabled": true,
             "index": 0,
             "name": "A0",
-            "strigger": 1,
+            "strigger": 0,
             "type": 10000,
             "view_index": 0
         },
@@ -160,7 +160,7 @@
             "enabled": true,
             "index": 15,
             "name": "A15",
-            "strigger": 0,
+            "strigger": 1,
             "type": 10000,
             "view_index": 15
         },
@@ -204,7 +204,7 @@
             "colour": "default",
             "enabled": true,
             "index": 20,
-            "name": "20",
+            "name": "Reset_",
             "strigger": 0,
             "type": 10000,
             "view_index": 20
@@ -313,28 +313,13 @@
         {
             "channel": [
                 {
-                    "d10": 10
-                },
-                {
-                    "d9": 9
-                },
-                {
-                    "d8": 8
+                    "d17": 17
                 },
                 {
                     "d19": 19
                 },
                 {
-                    "d13": 13
-                },
-                {
-                    "d17": 17
-                },
-                {
                     "d16": 16
-                },
-                {
-                    "d18": 18
                 },
                 {
                     "d15": 15
@@ -349,7 +334,25 @@
                     "d11": 11
                 },
                 {
-                    "d3": 3
+                    "d9": 9
+                },
+                {
+                    "d18": 18
+                },
+                {
+                    "d13": 13
+                },
+                {
+                    "d10": 10
+                },
+                {
+                    "d2": 2
+                },
+                {
+                    "d6": 6
+                },
+                {
+                    "d0": 0
                 },
                 {
                     "d1": 1
@@ -358,19 +361,16 @@
                     "d5": 5
                 },
                 {
-                    "d6": 6
-                },
-                {
                     "d7": 7
-                },
-                {
-                    "d2": 2
                 },
                 {
                     "d4": 4
                 },
                 {
-                    "d0": 0
+                    "d3": 3
+                },
+                {
+                    "d8": 8
                 }
             ],
             "id": "parallel",
@@ -393,7 +393,13 @@
         {
             "channel": [
                 {
-                    "d3": 27
+                    "d2": 26
+                },
+                {
+                    "d6": 30
+                },
+                {
+                    "d0": 24
                 },
                 {
                     "d1": 25
@@ -402,19 +408,13 @@
                     "d5": 29
                 },
                 {
-                    "d6": 30
-                },
-                {
                     "d7": 31
-                },
-                {
-                    "d2": 26
                 },
                 {
                     "d4": 28
                 },
                 {
-                    "d0": 24
+                    "d3": 27
                 }
             ],
             "id": "parallel",
