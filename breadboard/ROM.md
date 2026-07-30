@@ -62,59 +62,53 @@ Taille totale du programme : 0016h (22) octets
 
 # Calcul de la fréquence de clignotement
 
-Compte tenu du programme précédent, avec une fréquence d'horloge du 8088 à 5,33mhz, à quelle fréquence clignote les LED sur le port 10h?
+Compte tenu du programme précédent, avec une fréquence d'horloge du 8088 à 4,77mhz, à quelle fréquence clignote les LED sur le port 10h?
 
-Pour cela, il faut calculer le nombre de cycles d'horloge (clocks) que prend chaque instruction sur un 8088, puis convertir en temps réel avec la fréquence de 5,33 MHz.
+Pour cela, il faut calculer le nombre de cycles d'horloge (clocks) que prend chaque instruction sur un 8088, puis convertir en temps réel avec la fréquence de 4,77 MHz.
 
-## Temps de cycle de base
+# Calcul du clignotement à 4,77 MHz
 
-$$T_{clock} = \frac{1}{5{,}33 \text{ MHz}} \approx 187{,}6 \text{ ns}$$
 
-## Nombre de cycles par instruction (8088)
+## Nombre total de cycles CPU par cycle complet (ON + OFF)
 
 | Instruction | Cycles |
 |---|---|
-| `MOV AL, imm8` | 4 |
-| `OUT imm8, AL` | 10 |
-| `MOV BX, imm16` | 4 |
-| `DEC BX` | 2 |
-| `JNZ` (saut pris) | 16 |
-| `JNZ` (saut non pris) | 4 |
-| `JMP` (court) | 15 |
-
-## Calcul de chaque boucle de délai
-
-`MOV BX, 0000h` fait passer BX à FFFFh dès le premier `DEC`, donc la boucle s'exécute **65536 fois** avant que BX ne revienne à 0.
-
-- 65 535 itérations où le saut est **pris** : `(2 + 16) = 18` cycles
-- 1 dernière itération où le saut n'est **pas pris** : `(2 + 4) = 6` cycles
-
-$$\text{Cycles boucle} = 65535 \times 18 + 6 = 1\,179\,636 \text{ cycles}$$
-
-## Total pour un cycle complet (LED ON + LED OFF)
-
-| Section | Cycles |
-|---|---|
-| `MOV AL,0AAh` + `OUT` + `MOV BX,0` | 4+10+4 = 18 |
-| Boucle DELAI1 | 1 179 636 |
-| `MOV AL,00h` + `OUT` + `MOV BX,0` | 4+10+4 = 18 |
-| Boucle DELAI2 | 1 179 636 |
-| `JMP START` | 15 |
+| MOV AL,0AAh | 4 |
+| OUT 10h,AL | 10 |
+| MOV BX,0000h | 4 |
+| DELAI1 (boucle complète, 65536 itérations) | 1 179 636 |
+| MOV AL,00h | 4 |
+| OUT 10h,AL | 10 |
+| MOV BX,0000h | 4 |
+| DELAI2 (boucle complète) | 1 179 636 |
+| JMP START (saut court) | 15 |
 | **Total** | **2 359 323 cycles** |
 
-## Conversion en temps
+## Fréquence d'horloge
 
-$$T = \frac{2\,359\,323}{5\,330\,000} \approx 0{,}4426 \text{ s} = 442{,}6 \text{ ms}$$
+$$T_{clock} = \frac{1}{4{,}77 \text{ MHz}} \approx 209{,}6 \text{ ns}$$
 
-C'est la période complète (LED allumée + LED éteinte), donc :
-- LED allumée (0AAh sur le port) ≈ **221,3 ms**
-- LED éteinte (00h sur le port) ≈ **221,3 ms**
+## Durée d'un cycle complet (période)
+
+$$T = \frac{2\,359\,323}{4\,770\,000} \approx 0{,}49466 \text{ s} \approx 494{,}66 \text{ ms}$$
+
+- LED allumée ≈ 247,33 ms
+- LED éteinte ≈ 247,33 ms
 
 ## Fréquence de clignotement
 
-$$f = \frac{1}{T} = \frac{1}{0{,}4426 \text{ s}} \approx \boxed{2{,}26 \text{ Hz}}$$
+$$f = \frac{1}{0{,}49466 \text{ s}} \approx \boxed{2{,}022 \text{ Hz}}$$
 
-**Le(s) LED clignote(nt) environ 2,26 fois par seconde**, soit un peu plus de 2 clignotements complets à chaque seconde — visible à l'œil nu, ni trop rapide ni trop lent.
+## Résumé comparatif complet
+
+| Horloge | Période | Fréquence |
+|---|---|---|
+| 5,33 MHz | 442,6 ms | 2,26 Hz |
+| **4,77 MHz** | **494,66 ms** | **2,022 Hz** |
+| 10 kHz | ≈ 236 s | 0,00424 Hz |
+
+
+**À 4,77 MHz, avec le programme original (boucle infinie), la LED clignote en continu à environ 2,02 Hz**, soit un peu plus de 2 fois par seconde — un rythme perceptible et régulier, typique de ce que produirait ce code sur un véritable PC IBM 5150/5160 d'époque.
 
 ---
 
