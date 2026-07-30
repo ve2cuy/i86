@@ -118,3 +118,4 @@ $$f = \frac{1}{T} = \frac{1}{0{,}4426 \text{ s}} \approx \boxed{2{,}26 \text{ Hz
 
 ---
 
+A.B.
