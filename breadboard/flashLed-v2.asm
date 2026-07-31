@@ -5,10 +5,10 @@
 ; ==============================================
 
 BITS    16
-ORG     0000h                  ; = physique C0000h (debut de la ROM)
+ORG     0000h                   ; = physique C0000h (debut de la ROM)
 
 start:
-        mov     al, 10101010b        ; AL = 10101010b
+        mov     al, 10101010b   ; AL = 10101010b
         out     10h, al         ; envoie AL sur le port 10h
 
         mov     bx, 0000h       ; compteur de delai
@@ -16,7 +16,7 @@ delai1:
         dec     bx
         jnz     delai1          ; boucle jusqu'a BX = 0
 
-        mov     al, 01010101b         ; AL = 01010101b
+        mov     al, 01010101b   ; AL = 01010101b
         out     10h, al
 
         mov     bx, 0000h
