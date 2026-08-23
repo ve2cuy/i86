@@ -26,7 +26,7 @@
 ;         OE_  (24)
 ;         WE_  (29)
 ;         74LS32 : L + L -> L
-OE# (pin 32)	RD# du CPU (partagé avec la ROM)
+;         OE# (pin 32)	RD# du CPU (partagé avec la ROM)
 ;         
 ; -------------------------------------------------------------------------------------------------
 ;       - Les LEDS via un 74LS373 (latch) sur le port 10h.  
