@@ -103,22 +103,20 @@ lcd_init:
 ; lcd_command / lcd_data
 ; Envoient un octet complet au LCD en 2 quartets (fort puis
 ; faible). lcd_command: RS=0. lcd_data: RS=1 (caractere).
-; Entree: AL = octet a envoyer. CL est utilise en interne.
+; Entree: AL = octet a envoyer. CX est utilise en interne.
 ; ============================================================
 lcd_command:
         push    ax
         push    cx
-        mov     cl, al
 
-        mov     al, cl
-        shr     al, 1           ; 4 x SHR 1 (pas de "SHR reg,imm" sur 8086/8088 -
-        shr     al, 1           ; seul SHR reg,1 existe; SHR reg,imm arrive au 80186)
-        shr     al, 1
-        shr     al, 1
+        mov     ch, al
+        mov     al, ch
+        mov     cl, 4
+        shr     al, cl          ; get the high nibble (quartet fort)
         and     al, 00001111b   ; quartet fort -> bits0-3 (RS=0: rien a ajouter)
         call    lcd_strobe
 
-        mov     al, cl
+        mov     al, ch
         and     al, 00001111b   ; quartet faible
         call    lcd_strobe
 
@@ -130,18 +128,16 @@ lcd_command:
 lcd_data:
         push    ax
         push    cx
-        mov     cl, al
+        mov     ch, al
+        mov     cl, 4
 
-        mov     al, cl
-        shr     al, 1
-        shr     al, 1
-        shr     al, 1
-        shr     al, 1
+        mov     al, ch
+        shr     al, cl
         and     al, 00001111b
         or      al, LCD_RS      ; RS=1: c'est une donnee (caractere)
         call    lcd_strobe
 
-        mov     al, cl
+        mov     al, ch
         and     al, 00001111b
         or      al, LCD_RS
         call    lcd_strobe
