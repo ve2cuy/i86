@@ -1,3 +1,12 @@
+; ------------------------------------------------------------
+; lcd_hello.asm
+; ------------------------------------------------------------
+; Version optimisée pour 8086/8088 : SHR al,cl au lieu de 
+; 4 x SHR al,1 (pas de SHR reg,imm sur 8086/8088)
+; ------------------------------------------------------------
+; Pour le montage, le signal RW du LCD est relié à la masse.
+; ------------------------------------------------------------
+
 BITS    16
 CPU     8086                    ; refuse tout opcode qui n'existe pas sur un vrai 8088
 ORG     0000h                   ; = physique C0000h (debut de la ROM)
@@ -10,7 +19,7 @@ ORG     0000h                   ; = physique C0000h (debut de la ROM)
 ; via les "equ" ci-dessous si ton cablage reel differe):
 ;   bits 0-3 : DATA  -> D4-D7 du LCD (D4=bit0, D5=bit1, D6=bit2, D7=bit3)
 ;   bit  4   : RS    -> 0=commande, 1=donnee (caractere)
-;   bit  5   : R/W   -> TOUJOURS 0 dans ce montage: le latch entre le
+;            : R/W   -> TOUJOURS 0 dans ce montage: le latch entre le
 ;                        port et le LCD ne permet pas de relire le LCD
 ;                        (pas de bus de retour), donc pas de lecture du
 ;                        drapeau "busy" possible. On utilise des delais
@@ -22,7 +31,7 @@ ORG     0000h                   ; = physique C0000h (debut de la ROM)
 STACK_SEG       equ     1000h
 
 LCD_RS          equ     00010000b       ; bit4
-LCD_RW          equ     00100000b       ; bit5 (jamais mis a 1 ici)
+; LCD_RW          equ     00100000b       ; bit5 (jamais mis a 1 ici)
 LCD_E           equ     01000000b       ; bit6
 LCD_E_MASK_OFF  equ     10111111b       ; pour effacer le bit E (AND)
 
@@ -38,7 +47,7 @@ start:
                                  ; testee ailleurs, seulement les chaines de
                                  ; caracteres stockees ici, dans la ROM.
 
-        call    lcd_init
+.ici    call    lcd_init
 
         mov     si, msg_line1
         call    lcd_print
@@ -49,8 +58,13 @@ start:
         mov     si, msg_line2
         call    lcd_print
 
+        ; debug
+        mov     al, 00000000b   ; remise à zéro pour diagnostic (à retirer plus tard)
+        call    lcd_command     ; adresse 00h - convention standard HD44780 2 lignes)
+
+
 .halt:
-        jmp     .halt           ; Hello World de validation: on s'arrete ici
+        jmp     .ici           ; Hello World de validation: on s'arrete ici
 
 ; ============================================================
 ; lcd_init
