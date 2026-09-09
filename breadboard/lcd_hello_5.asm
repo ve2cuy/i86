@@ -1,5 +1,6 @@
 ; ------------------------------------------------------------
-; lcd_hello_4.asm
+; lcd_hello_5.asm
+; nasm -f bin lcd_hello_5.asm -o Z:\Partage\Alain\lcd_hello_5.bin
 ; ------------------------------------------------------------
 ; Version optimisée pour 8086/8088 : SHR al,cl au lieu de
 ; 4 x SHR al,1 (pas de SHR reg,imm sur 8086/8088). Cette partie
@@ -64,6 +65,7 @@ start:
 
 .ici:
         call    lcd_init
+        call    lcd_init
 
         mov     si, msg_line1
         call    lcd_print
@@ -98,7 +100,7 @@ lcd_init:
 
         mov     al, 0011b
         call    lcd_strobe
-        call    lcd_delay              ; >= 100us
+        call    lcd_delay_long              ; ?? BUG >= 100us
 
         mov     al, 0011b
         call    lcd_strobe
@@ -110,12 +112,14 @@ lcd_init:
 
         ; A partir d'ici, le LCD attend 2 quartets (fort puis faible) par
         ; octet: on peut utiliser lcd_command/lcd_data normalement.
-        mov     al, 00101000b          ; Function Set: 4 bits, 2 lignes, police 5x8
+;        mov     al, 00101000b          ; Function Set: 4 bits, 2 lignes, police 5x8
+        mov     al, 00100000b          ; ARDUINO -> Function Set: 4 bits, 2 lignes, police 5x8
         call    lcd_command
 
         mov     al, 00001100b          ; Display ON, curseur OFF, clignotement OFF
         call    lcd_command
 
+; Pas dans la séquence Arduino, 
         mov     al, 00000110b          ; Entry Mode: incremente, pas de decalage
         call    lcd_command
 
@@ -184,6 +188,9 @@ lcd_data:
 lcd_strobe:
         push    ax
         out     10h, al         ; pose RS + le quartet, E=0 (etat de repos)
+        nop     ; Wait un peu avant de lever E (front montant)
+        nop
+        nop
         or      al, LCD_E       ; E=1
         out     10h, al
         call    lcd_short_delai ; largeur d'impulsion E (>= ~450ns, tres large marge)
