@@ -65,7 +65,9 @@ start:
 
 .ici:
         call    lcd_init
+        call    led_walk
         call    lcd_init
+        call    led_walk
 
         mov     si, msg_line1
         call    lcd_print
@@ -287,6 +289,33 @@ delay_ms:
         pop     cx
         pop     bx
         ret
+
+led_walk:
+        push    ax
+        push    bx      
+        push    cx
+
+        xor     al, al
+        out     10h, al         ; eteint toutes les LED (etat de depart du cycle)
+
+        mov     bl, 00000001b   ; premiere LED a allumer: bit0
+
+.next_led:
+        or      al, bl          ; ajoute la LED courante SANS effacer les precedentes
+        out     10h, al
+
+        mov     cx, 100        ; delai de 100 ms = .1 seconde
+        call    delay_ms
+
+        shl     bl, 1           ; LED suivante (SHL reg,1 - seul decalage disponible
+                                 ; sur un vrai 8086/8088, pas de SHL reg,imm>1)
+        jnz     .next_led       ; continue tant qu'il reste un bit a allumer
+                                 ; (bl devient 0 juste apres avoir traite le bit7)
+        pop     cx
+        pop     bx
+        pop     ax
+        ret
+
 
 ; ---- messages -------------------------------------------------
 msg_line1:      db      'Hello, World!', 0
