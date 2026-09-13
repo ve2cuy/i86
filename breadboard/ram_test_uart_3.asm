@@ -35,6 +35,16 @@ UART_TX         equ     00000001b       ; bit0
 UART_IDLE       equ     00000001b       ; ligne au repos (MARK) = 1
 SECONDE         equ     1000            ; 1 seconde = 1000 ms
 
+;*****************
+; CONST. PIO 1   *
+;*****************
+PORTA       EQU    10000000B   ;8255 ACTIVE PAR A7
+PORTB       EQU    10000001B
+PORTC       EQU    10000010B
+PIO         EQU    10000011B
+MASQUE_PIO  EQU    10000000B   ;PORT A,B ET C EN SORTIES
+; MASQUE_PIO2 EQU    10001001B   ;PORT A ET B EN SORTIES, C EN ENTREE
+
 %macro cls 0
         mov     si, CLS         ; efface l'ecran du terminal (ANSI)
         call    uart_tx_string
@@ -70,6 +80,13 @@ start:
         call    uart_tx_string
         mov     cx, SECONDE     ; pause de 1 seconde avant de débuter le test (permet de voir le message de depart)
         call    delay_ms
+
+.temp:        
+        mov     si, txt_8255_init
+        call    uart_tx_string        
+        call    init_8255
+        call    effet1
+;        jmp     .temp
 
         call    test_ram        ; teste toute la RAM (128K) et rapporte via UART
         call    rom_dump        ; dump des 16 premiers Ko de la ROM - voir plus bas
@@ -536,6 +553,132 @@ msg_dump_fin:
         call    uart_tx_string
         ret
 
+
+; -------------------------------------------------------------------------------------------------
+; Section suivante: routines d'initialisation et de controle des 8255 (PIO)
+; -------------------------------------------------------------------------------------------------
+
+;****************************************
+;* init 8255's			                *
+;****************************************
+init_8255:
+
+        ;*********************
+        ; INIT LA 8255 NO. 1 *
+        ;*********************
+        ;-----------------------------------------
+        ; LES 8255 SERVENT AU CONTROLE DU CLAVIER
+        ; ET DE L'ECRAN.
+        ;----------------------------------------
+        MOV    AL,MASQUE_PIO  ; PORT A,B ET C EN SORTIE
+        OUT    PIO,AL         ; CMD LA 8255
+        MOV    AL,0
+        OUT    PORTA,AL
+        OUT    PORTB,AL
+        OUT    PORTC,AL
+
+        ;********************
+        ; INIT LA 8255 NO. 2 *
+        ;********************
+        ;MOV    AL,MASQUE_PIO  
+        ;OUT    PIO2,AL        ; CMD LA 8255
+        ;MOV    AL,0
+        ;OUT    PORT2A,AL
+        ;OUT    PORT2B,AL
+        ;OUT    PORT2C,AL
+ 
+        ;********************
+        ; INIT LA 8255 NO. 3 *
+        ;********************
+        ;MOV    AL,MASQUE_PIO  
+        ;OUT    PIO3,AL        ; CMD LA 8255
+        ;MOV    AL,0
+        ;OUT    PORT3A,AL
+        ;OUT    PORT3B,AL
+        ;OUT    PORT3C,AL
+
+	ret
+; ***************************************
+
+
+;****************************************
+;* clear_5255A..                        *
+;****************************************
+
+clear_8255A:
+	push 	ax
+	mov	al, 0
+	call	proc1
+	pop	ax
+	ret
+			   
+;****************************************
+;* proc1     ...                        *
+;****************************************
+proc1:		
+        OUT    PORTA,AL			
+	OUT    PORTB,AL			
+	OUT    PORTC,AL			
+	ret
+
+;****************************************
+;  ** move LED to LEFT 8 times
+effet1:
+	mov	al,1
+	mov	bx,16
+.b1:	mov	cx, 8
+	;mov al,byte ptr ds:[100h]   ; use memory as variable 
+.b2:	;out	0h, al					; any port to toggle the 74ls373
+			
+	; ln
+			
+	call	proc1
+;	call	proc2
+;	call	proc3
+	; inc byte ptr ds:[100h]
+
+	call	delay2
+	rcl	al,1			
+	loop	.b2
+
+;  ** move LED to RIGHT 8 times
+	mov	cx, 8
+.b3:	rcr	al,1			
+
+	;out	0h, al					; any port to toggle the 74ls373
+			
+	call	proc1
+;	call	proc2
+;	call	proc3
+	; inc byte ptr ds:[100h]
+
+	call	delay2
+	loop	.b3
+
+	dec	bx
+	jnz	.b1
+        ret
+
+;*********************** ***********************
+
+;****************************************
+;* wait a sec...                        *
+;****************************************
+delay2:		
+        push	dx
+	push	bx
+	mov 	bx,1FFFh 
+.boucle:
+	dec 	bx
+	jnz 	.boucle
+	pop		bx
+	pop		dx
+	ret
+;*** END delay
+
+
+; -------------------------------------------------------------------------------------------------
+
 ; ---- couleurs ANSI (memes constantes que uart_hello_2.asm) ---
 ANSI_ROUGE:             db      27,'[31m',0
 ANSI_VERT:              db      27,'[32m',0
@@ -565,6 +708,8 @@ txt_dump_banniere:      db      27,'[34m','=== Dump ROM - 16 premiers Ko, adress
                         db      'Duree estimee a 9600 bauds: environ 83 secondes (~80 Ko de texte)',13,10,13,10,0
 
 txt_dump_fin:            db      27,'[32m','*** Dump ROM termine ***',27,'[0m',13,10,13,10,0
+
+txt_8255_init:           db      27,'[33m','*** Test des 8255, Init + effet1 ***',27,'[0m',13,10,13,10,0
 
 txt_auteur:             db      '8088 sur breadboard version 2026',13,10
                         db      'Par Alain Boudreault, aka VE2CUY',13,10
