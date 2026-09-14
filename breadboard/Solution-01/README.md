@@ -37,6 +37,75 @@ port passe par `porta_write` (voir `lib/common.asm`), qui ne modifie
 que les bits concernés et préserve les autres via une copie fantôme
 en RAM.
 
+## Schéma bloc du circuit électronique
+
+Décodage d'adresses (logique simple, sans décodeur dédié — un seul
+bit d'adresse suffit à distinguer ROM/RAM, la sélection du 8255 se
+faisant sur le bus d'E/S) :
+
+- **ROM** : `CS = A19`
+- **RAM** : `CS = NOT A19`
+- **8255 (PIO)** : `CS = A7 AND IO/M` (cycle d'E/S, adresse ≥ 80h —
+  `A0`/`A1` vont directement aux broches `A0`/`A1` du 8255 pour
+  sélectionner Port A/B/C/registre de commande — voir `PORTA`/`PORTB`/
+  `PORTC`/`PIO` dans `include/hardware.inc`, ports 80h-83h)
+
+```mermaid
+flowchart TD
+    subgraph CPU["CPU 8088/8086"]
+        AB["Bus d'adresses A0-A19"]
+        DB["Bus de donnees D0-D7"]
+        IOM["IO/M (cycle E/S vs memoire)"]
+    end
+
+    subgraph DEC["Decodage d'adresses"]
+        A19G["A19"]
+        NOTA19["NOT A19"]
+        A7IO["A7 AND IO/M"]
+    end
+
+    subgraph MEM["Memoire"]
+        ROM["ROM 256 Ko\nC0000h-FFFFFh\nCS = A19"]
+        RAM["RAM statique 128 Ko\n00000h-1FFFFh\nCS = NOT A19"]
+    end
+
+    subgraph IOBLK["Entrees/Sorties"]
+        PIO["8255 PIO\nPorts 80h-83h\nCS = A7 AND IO/M"]
+    end
+
+    subgraph PERIPH["Peripheriques (Port A du 8255, partage via porta_write)"]
+        LCD["LCD HD44780 4x20\nPA0-PA3=D4-D7, PA4=RS, PA6=E"]
+        UART["UART logiciel 9600 8N1\nPA7 (bit-bang)"]
+    end
+
+    LED["Port C: chenillard (animation POST)"]
+
+    AB --> A19G
+    A19G --> NOTA19
+    AB --> A7IO
+    IOM --> A7IO
+
+    A19G -->|CS| ROM
+    NOTA19 -->|CS| RAM
+    A7IO -->|CS| PIO
+
+    DB --- ROM
+    DB --- RAM
+    DB --- PIO
+
+    PIO --> LCD
+    PIO --> UART
+    PIO --> LED
+```
+
+⚠️ Note : la sélection de la ROM ne dépend que de `A19` (pas de
+`A18`) — la ROM physique (256 Ko = `A0-A17`) est donc mise en miroir
+sur les 512 Ko de la moitié haute de l'espace mémoire (`80000h-FFFFFh`)
+si `A18` n'est câblé nulle part ailleurs ; le firmware n'utilise que
+la fenêtre `C0000h-FFFFFh`. Même remarque pour la RAM (128 Ko, moitié
+basse de 1 Mo) : seuls `00000h-1FFFFh` sont réellement testés par
+`test_ram` (voir `solution-01.asm`).
+
 ## Structure du dossier
 
 ```
