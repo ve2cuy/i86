@@ -47,6 +47,38 @@ ORG     0000h                   ; = physique C0000h (debut de la ROM)
 ; Cablage LCD (Port A du 8255, PA0-PA7): identique a lcd_hello_6.asm
 ;   PA0-PA3 -> D4-D7, PA4 -> RS, PA6 -> E, R/W du LCD a la masse.
 ;   PA7 -> UART (nouveau - remplace le latch/74LS373 externe).
+;
+; MISE A JOUR - LCD 4x20 (remplace le 2x16): Alain a remplace
+; l'afficheur par un modele 4 lignes x 20 caracteres. L'affichage
+; des 3 etapes a ete entierement repense pour profiter de l'espace:
+;
+;   Etape 1 (test 8255): ligne 3 suit maintenant la progression de
+;   l'animation en direct ("Passe: NNN/16"), ligne 4 = texte fixe.
+;
+;   Etape 2 (test RAM): ligne 2 affiche desormais la plage COMPLETE
+;   du bloc (debut-fin, comme sur l'UART - avant, seule l'adresse de
+;   debut tenait sur 16 caracteres). Ligne 3 = etat du bloc en toutes
+;   lettres (OK/DEFAUT). Ligne 4 = nouveaux compteurs cumulatifs
+;   (bloc courant/127, nombre de blocs ayant eu au moins un defaut) -
+;   vivent en RAM juste apres PORTA_SHADOW (voir plus bas), remis a
+;   zero au debut de chaque test_ram.
+;
+;   Etape 3 (dump ROM): ligne 3 = apercu des 7 premiers octets de la
+;   ligne en cours (sur les 16 envoyes par l'UART). Ligne 4 = numero
+;   de ligne courante/257 (256 lignes de 4 Ko + la ligne des 16
+;   derniers octets).
+;
+; Adressage DDRAM utilise pour les lignes 3/4 (convention standard
+; des afficheurs 20x4 base sur le HD44780: la ligne 3 est en fait la
+; suite de la ligne 1 en memoire interne, et la ligne 4 la suite de
+; la ligne 2): ligne1=00h, ligne2=40h, ligne3=14h, ligne4=54h. C'est
+; la convention la plus repandue ("type A") - si le texte des lignes
+; 3/4 apparait au mauvais endroit sur ton module, il existe une
+; variante moins courante (00h/20h/40h/60h) a essayer a la place.
+; Le Function Set (00101000b: 4 bits, N=1) ne change PAS: le HD44780
+; ne connait que le mode "1 ligne" ou "2 lignes" en interne, un
+; afficheur 4 lignes multiplexe simplement chaque ligne logique sur
+; 2 lignes visibles.
 ; ------------------------------------------------------------
 STACK_SEG       equ     1000h
 
@@ -57,11 +89,14 @@ UART_BIT_ON     equ     10000000b       ; valeur du bit UART a l'etat "1"
 UART_IDLE       equ     10000000b       ; ligne au repos (MARK) = 1
 SECONDE         equ     1000            ; 1 seconde = 1000 ms
 
-; --- copie fantome du port A: vit dans la zone deja reservee a la
-; --- pile (segment STACK_SEG, tout debut du dernier Ko non teste -
-; --- voir "1 Ko reserve a la pile" dans test_ram) ---
+; --- copie fantome du port A + compteurs de progression du test RAM:
+; --- vivent dans la zone deja reservee a la pile (segment STACK_SEG,
+; --- tout debut du dernier Ko non teste - voir "1 Ko reserve a la
+; --- pile" dans test_ram). 3 octets utilises sur 1024 reserves. ---
 VAR_SEG             equ     1000h
 PORTA_SHADOW_OFF    equ     0FC00h
+BLOCK_COUNTER_OFF   equ     0FC01h  ; numero du bloc courant (1-127)
+DEFECT_COUNTER_OFF  equ     0FC02h  ; nombre de blocs ayant eu >=1 defaut
 
 ;*****************
 ; CONST. PIO 1   *
@@ -156,6 +191,8 @@ start:
         call    lcd_show_line1
         mov     si, lcd_txt_step1_l2
         call    lcd_show_line2
+        mov     si, lcd_txt_step1_l4   ; texte fixe (ligne 3 = progression
+        call    lcd_show_line4         ; live, mise a jour par effet1)
         call    effet1
 ;        jmp     .temp
 
@@ -194,6 +231,17 @@ test_ram:
                                  ; le timing bit a bit de l'UART)
         xor     bh, bh          ; BH = drapeau d'erreur GLOBAL (0 = RAM valide)
         xor     bp, bp          ; BP = drapeau d'erreur du BLOC courant
+
+        ; --- remet a zero les compteurs de progression du LCD (ligne
+        ; 4, etape 2) - vivent en RAM juste apres PORTA_SHADOW, voir
+        ; en en-tete. ES/DI seront de toute facon rechargEs juste
+        ; apres pour le premier segment: pas besoin de les sauver ---
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, BLOCK_COUNTER_OFF
+        mov     byte [es:di], 0
+        mov     di, DEFECT_COUNTER_OFF
+        mov     byte [es:di], 0
 
         call    msg_banniere
 
@@ -316,6 +364,7 @@ ROM_LAST_LINE_OFF       equ     0FFF0h          ; F000h:FFF0h = physique FFFF0h
 
 rom_dump:
         push    ax
+        push    bx
         push    cx
         push    dx
         push    si
@@ -328,8 +377,11 @@ rom_dump:
         mov     es, ax          ; ES = segment materiel REEL (CS), affiche tel quel
 
         xor     di, di
+        mov     bx, 1           ; BX = numero de ligne courante (1-based),
+                                 ; passe a dump_line pour la ligne 4 du LCD
 .line_loop:
         call    dump_line               ; affiche ES:DI (UART+LCD), avance DI de 16
+        inc     bx
         cmp     di, ROM_DUMP_SIZE       ; les 4 Ko demandes sont-ils affiches ?
         jb      .line_loop
 
@@ -337,6 +389,7 @@ rom_dump:
         mov     ax, ROM_LAST_LINE_SEG
         mov     es, ax
         mov     di, ROM_LAST_LINE_OFF
+        mov     bx, 257         ; derniere ligne logique (256 + celle-ci)
         call    dump_line
 
         call    msg_dump_fin
@@ -346,17 +399,22 @@ rom_dump:
         pop     si
         pop     dx
         pop     cx
+        pop     bx
         pop     ax
         ret
 
 ; ============================================================
 ; dump_line
-; Affiche UNE ligne de 16 octets, a la fois sur l'UART (format
-; complet: adresse/hexa/ascii) et sur la ligne 2 du LCD (adresse
-; seulement: "SSSS:OOOO", complete a 16 caracteres).
+; Affiche UNE ligne de 16 octets:
+;   UART: format complet (adresse/hexa/ascii) - INCHANGE
+;   LCD (4x20):
+;     ligne 2 = adresse "SSSS:OOOO"
+;     ligne 3 = apercu des 7 premiers octets en hexadecimal
+;     ligne 4 = "Ligne: NNN/257"
 ;
 ; Entree:  ES:DI = adresse de depart de la ligne (16 octets)
-; Sortie:  DI avance de 16 (adresse de la ligne suivante)
+;          BX = numero de cette ligne (1-257, prepare par rom_dump)
+; Sortie:  DI avance de 16 (adresse de la ligne suivante), BX inchange
 ; ============================================================
 dump_line:
         ; --- LCD: adresse de cette ligne (avant de l'envoyer sur l'UART,
@@ -368,7 +426,37 @@ dump_line:
         call    lcd_data
         mov     ax, di
         call    lcd_tx_hex_word
-        mov     si, lcd_txt_dump_pad    ; complete a 16 caracteres (9 utilises)
+        mov     si, lcd_txt_dump_pad    ; complete a 20 caracteres (9 utilises)
+        call    lcd_print
+
+        ; --- Ligne 3 du LCD: apercu des 7 premiers octets en hexa
+        ; (7*2 chiffres + 6 espaces = 20 caracteres exactement) ---
+        call    lcd_line3
+        push    di              ; DI va temporairement avancer pour la lecture -
+                                 ; restaure avant de continuer (l'appelant, et le
+                                 ; bloc UART plus bas, ont besoin de la valeur
+                                 ; d'origine)
+        mov     cx, 7
+.lcd_preview_loop:
+        mov     al, [es:di]
+        call    lcd_tx_hex_byte
+        cmp     cx, 1
+        je      .lcd_preview_last
+        mov     al, ' '
+        call    lcd_data
+.lcd_preview_last:
+        inc     di
+        loop    .lcd_preview_loop
+        pop     di
+
+        ; --- Ligne 4 du LCD: numero de cette ligne / 257 (BX prepare
+        ; par rom_dump) ---
+        call    lcd_line4
+        mov     si, lcd_txt_ligne_prefix
+        call    lcd_print
+        mov     ax, bx
+        call    lcd_tx_dec3
+        mov     si, lcd_txt_ligne_suffix
         call    lcd_print
 
         ; --- UART: adresse reelle ES:DI ---
@@ -564,13 +652,35 @@ msg_banniere:
 ; msg_bloc_progression
 ; Affiche le bloc de 1024 octets qui vient d'etre teste:
 ;   UART: "SEG:debut-SEG:fin <vert>OK<blanc>"  (ou <rouge>DEFAUT)
-;   LCD (ligne 2, 16 car. exactement): "SSSS:OOOO OK    " ou
-;        "SSSS:OOOO ERR   "
+;   LCD (4x20):
+;     ligne 2 = plage complete du bloc "SSSS:OOOO-SSSS:OOOO"
+;     ligne 3 = etat en toutes lettres "Etat: OK" / "Etat: DEFAUT"
+;     ligne 4 = compteurs cumulatifs "Bloc:NNN/127 Def:NNN"
 ; Entree: ES = segment courant, DI = offset JUSTE APRES le bloc
 ;         (multiple de 400h), BP = drapeau du bloc (0=ok, sinon defaut)
 ; Reinitialise BP a 0 avant de retourner.
 ; ============================================================
 msg_bloc_progression:
+        ; --- incremente les compteurs cumulatifs (bloc courant, et
+        ; blocs defectueux si BP != 0) - vivent en RAM juste apres
+        ; PORTA_SHADOW (voir en en-tete). ES:DI appartiennent a
+        ; l'appelant (test_segment, en plein test) - sauvegardes et
+        ; restaures ici, meme prudence que porta_write. ---
+        push    es
+        push    di
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, BLOCK_COUNTER_OFF
+        inc     byte [es:di]
+
+        cmp     bp, 0
+        je      .no_defect_incr
+        mov     di, DEFECT_COUNTER_OFF
+        inc     byte [es:di]
+.no_defect_incr:
+        pop     di
+        pop     es
+
         mov     si, ANSI_BLANC
         call    uart_tx_string
 
@@ -612,8 +722,9 @@ msg_bloc_progression:
         mov     si, txt_ok_court
         call    uart_tx_string
 .fin:
-        ; --- meme information (adresse de debut + OK/ERR), condensee
-        ; sur 16 caracteres, sur la ligne 2 du LCD ---
+        ; --- Ligne 2 du LCD: plage complete du bloc "SSSS:OOOO-SSSS:OOOO",
+        ; miroir exact de ce qui part sur l'UART (19 caracteres - avant,
+        ; sur 16 colonnes, seule l'adresse de DEBUT tenait) ---
         call    lcd_line2
 
         mov     ax, es
@@ -621,21 +732,57 @@ msg_bloc_progression:
         mov     al, ':'
         call    lcd_data
         mov     ax, di
-        sub     ax, 0400h       ; meme calcul que ci-dessus: debut du bloc
+        sub     ax, 0400h       ; ax = debut du bloc (di - 1024)
         call    lcd_tx_hex_word
-        mov     al, ' '
-        call    lcd_data
-        ; -> 10 caracteres affiches jusqu'ici (4+1+4+1)
 
+        mov     al, '-'
+        call    lcd_data
+
+        mov     ax, es
+        call    lcd_tx_hex_word
+        mov     al, ':'
+        call    lcd_data
+        mov     ax, di
+        dec     ax              ; ax = fin du bloc (di - 1)
+        call    lcd_tx_hex_word
+
+        ; --- Ligne 3 du LCD: etat en toutes lettres ---
+        call    lcd_line3
         cmp     bp, 0
         je      .lcd_ok
-        mov     si, lcd_txt_err ; "ERR   " - 6 caracteres, complete a 16
+        mov     si, lcd_txt_etat_defaut
         call    lcd_print
-        jmp     .lcd_fin
+        jmp     .lcd_etat_fin
 .lcd_ok:
-        mov     si, lcd_txt_ok  ; "OK    " - 6 caracteres, complete a 16
+        mov     si, lcd_txt_etat_ok
         call    lcd_print
-.lcd_fin:
+.lcd_etat_fin:
+
+        ; --- Ligne 4 du LCD: compteurs cumulatifs "Bloc:NNN/127 Def:NNN"
+        ; (20 caracteres exactement) - relit les deux compteurs
+        ; incrementes au debut de cette routine ---
+        push    es
+        push    di
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, BLOCK_COUNTER_OFF
+        mov     dl, [es:di]     ; DL = numero de bloc courant
+        mov     di, DEFECT_COUNTER_OFF
+        mov     dh, [es:di]     ; DH = nombre de blocs defectueux
+        pop     di
+        pop     es
+
+        call    lcd_line4
+        mov     si, lcd_txt_bloc_prefix
+        call    lcd_print
+        mov     al, dl
+        xor     ah, ah
+        call    lcd_tx_dec3
+        mov     si, lcd_txt_bloc_mid
+        call    lcd_print
+        mov     al, dh
+        xor     ah, ah
+        call    lcd_tx_dec3
 
         mov     bp, 0           ; reinitialise le drapeau pour le prochain bloc
         ret
@@ -755,7 +902,24 @@ proc1:
 effet1:
 	mov	al,1
 	mov	bx,16
-.b1:	mov	cx, 8
+.b1:
+        ; --- Ligne 3 du LCD: passe courante (1-16), mise a jour une
+        ; fois par passe. AL (motif de LED en cours) doit survivre
+        ; intact - BX (compteur de passes) est seulement LU ici, pas
+        ; modifie, et les routines LCD le preservent de toute facon
+        ; (meme discipline que porta_write/uart_tx_byte). ---
+        push    ax
+        call    lcd_line3
+        mov     si, lcd_txt_passe_prefix
+        call    lcd_print
+        mov     ax, 17
+        sub     ax, bx          ; ax = numero de passe courant (1..16)
+        call    lcd_tx_dec3
+        mov     si, lcd_txt_passe_suffix
+        call    lcd_print
+        pop     ax
+
+	mov	cx, 8
 .b2:
 	call	proc1
 	call	delay2
@@ -988,7 +1152,11 @@ lcd_print:
         ret
 
 ; ============================================================
-; lcd_line1 / lcd_line2
+; lcd_line1 / lcd_line2 / lcd_line3 / lcd_line4
+; Positionnement DDRAM pour un afficheur 4x20: la ligne 3 est en
+; fait la suite de la ligne 1 en memoire interne (00h puis 14h), et
+; la ligne 4 la suite de la ligne 2 (40h puis 54h) - convention
+; standard ("type A") des afficheurs 20x4 bases sur le HD44780.
 ; ============================================================
 lcd_line1:
         push    ax
@@ -1004,8 +1172,22 @@ lcd_line2:
         pop     ax
         ret
 
+lcd_line3:
+        push    ax
+        mov     al, 10010100b   ; Set DDRAM Address = 80h | 14h
+        call    lcd_command
+        pop     ax
+        ret
+
+lcd_line4:
+        push    ax
+        mov     al, 11010100b   ; Set DDRAM Address = 80h | 54h
+        call    lcd_command
+        pop     ax
+        ret
+
 ; ============================================================
-; lcd_show_line1 / lcd_show_line2
+; lcd_show_line1 / lcd_show_line2 / lcd_show_line3 / lcd_show_line4
 ; ============================================================
 lcd_show_line1:
         call    lcd_line1
@@ -1014,6 +1196,16 @@ lcd_show_line1:
 
 lcd_show_line2:
         call    lcd_line2
+        call    lcd_print
+        ret
+
+lcd_show_line3:
+        call    lcd_line3
+        call    lcd_print
+        ret
+
+lcd_show_line4:
+        call    lcd_line4
         call    lcd_print
         ret
 
@@ -1051,6 +1243,46 @@ lcd_tx_hex_word:
         call    lcd_tx_hex_byte
         mov     al, bl
         call    lcd_tx_hex_byte
+        pop     bx
+        ret
+
+; ============================================================
+; lcd_tx_dec3
+; Affiche AX (0-999) en decimal, TOUJOURS 3 chiffres avec des
+; zeros de tete (ex: 7 -> "007", 257 -> "257"). Detruit AX/BX/CX/
+; DX - jamais SI/DI/ES/BP (meme discipline que les routines hex).
+; Utilise pour les compteurs de l'etape 2 (blocs/defauts, 0-127) et
+; de l'etape 3 (numero de ligne, 1-257) sur le LCD 4x20.
+; ============================================================
+lcd_tx_dec3:
+        push    bx
+        push    cx
+        push    dx
+
+        xor     dx, dx
+        mov     bx, 100
+        div     bx              ; AX = centaines, DX = reste (0-99)
+        mov     cl, al          ; CL = chiffre des centaines
+
+        mov     ax, dx
+        xor     dx, dx
+        mov     bx, 10
+        div     bx              ; AX = dizaines, DX = unites
+        mov     ch, dl          ; CH = chiffre des unites
+        mov     bh, al          ; BH = chiffre des dizaines
+
+        mov     al, cl
+        add     al, '0'
+        call    lcd_data        ; centaines
+        mov     al, bh
+        add     al, '0'
+        call    lcd_data        ; dizaines
+        mov     al, ch
+        add     al, '0'
+        call    lcd_data        ; unites
+
+        pop     dx
+        pop     cx
         pop     bx
         ret
 
@@ -1133,40 +1365,64 @@ txt_auteur:             db      '8088 sur breadboard version 2026',13,10
                         db      'Par Alain Boudreault, aka VE2CUY',13,10
                         db      '--------------------------------',13,10,13,10,0
 
-; ---- textes LCD (16 caracteres, complete automatiquement par des
-; ---- espaces via "times" ----
-lcd_txt_step1_l1:       db      '1-Test 8255'
-                        times   16-($-lcd_txt_step1_l1) db ' '
+; ---- textes LCD (20 caracteres, complete automatiquement par des
+; ---- espaces via "times" - afficheur 4x20) ----
+lcd_txt_step1_l1:       db      '1/3 - Test 8255'
+                        times   20-($-lcd_txt_step1_l1) db ' '
                         db      0
-lcd_txt_step1_l2:       db      'Port C: anime'
-                        times   16-($-lcd_txt_step1_l2) db ' '
+lcd_txt_step1_l2:       db      'Chenillard Port C'
+                        times   20-($-lcd_txt_step1_l2) db ' '
+                        db      0
+lcd_txt_step1_l4:       db      'VE2CUY 2026'
+                        times   20-($-lcd_txt_step1_l4) db ' '
                         db      0
 
-lcd_txt_step2_l1:       db      '2-Test RAM'
-                        times   16-($-lcd_txt_step2_l1) db ' '
+lcd_txt_step2_l1:       db      '2/3 - Test RAM 128K'
+                        times   20-($-lcd_txt_step2_l1) db ' '
                         db      0
 lcd_txt_step2_l2:       db      'En attente...'
-                        times   16-($-lcd_txt_step2_l2) db ' '
+                        times   20-($-lcd_txt_step2_l2) db ' '
                         db      0
 
-lcd_txt_step3_l1:       db      '3-Dump ROM'
-                        times   16-($-lcd_txt_step3_l1) db ' '
+lcd_txt_step3_l1:       db      '3/3 - Dump ROM'
+                        times   20-($-lcd_txt_step3_l1) db ' '
                         db      0
-lcd_txt_step3_l2:       db      'Dump 4K+16oct.'
-                        times   16-($-lcd_txt_step3_l2) db ' '
+lcd_txt_step3_l2:       db      'Dump 4K+16 octets'
+                        times   20-($-lcd_txt_step3_l2) db ' '
                         db      0
 
-; ---- complement de 7 espaces utilise par dump_line ----
+; ---- complement de 11 espaces utilise par dump_line, apres les 9
+; ---- caracteres d'adresse "SSSS:OOOO" (9+11=20) ----
 lcd_txt_dump_pad:
-                        times   7 db ' '
+                        times   11 db ' '
                         db      0
 
-; ---- "queues" de 6 caracteres utilisees par msg_bloc_progression ----
-lcd_txt_ok:             db      'OK'
-                        times   6-($-lcd_txt_ok) db ' '
+; ---- ligne 3 de l'etape 2 (msg_bloc_progression): etat en toutes
+; ---- lettres, 20 caracteres ----
+lcd_txt_etat_ok:        db      'Etat: OK'
+                        times   20-($-lcd_txt_etat_ok) db ' '
                         db      0
-lcd_txt_err:            db      'ERR'
-                        times   6-($-lcd_txt_err) db ' '
+lcd_txt_etat_defaut:    db      'Etat: DEFAUT'
+                        times   20-($-lcd_txt_etat_defaut) db ' '
+                        db      0
+
+; ---- ligne 4 de l'etape 2: "Bloc:" + dec3 + "/127 Def:" + dec3 =
+; ---- 5+3+9+3 = 20 caracteres EXACTEMENT (pas de padding requis) ----
+lcd_txt_bloc_prefix:    db      'Bloc:', 0
+lcd_txt_bloc_mid:       db      '/127 Def:', 0
+
+; ---- ligne 3 de l'etape 1 (effet1): "Passe: " + dec3 + "/16" +
+; ---- 7 espaces = 7+3+10 = 20 caracteres ----
+lcd_txt_passe_prefix:   db      'Passe: ', 0
+lcd_txt_passe_suffix:   db      '/16'
+                        times   10-($-lcd_txt_passe_suffix) db ' '
+                        db      0
+
+; ---- ligne 4 de l'etape 3 (dump_line): "Ligne: " + dec3 + "/257" +
+; ---- 6 espaces = 7+3+10 = 20 caracteres ----
+lcd_txt_ligne_prefix:   db      'Ligne: ', 0
+lcd_txt_ligne_suffix:   db      '/257'
+                        times   10-($-lcd_txt_ligne_suffix) db ' '
                         db      0
 
 ; ---- remplissage jusqu'au vecteur de reset            ----
