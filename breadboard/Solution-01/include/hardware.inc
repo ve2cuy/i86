@@ -1,0 +1,40 @@
+; ============================================================
+; hardware.inc
+; Constantes materielles partagees (8255 PIO + adressage RAM des
+; variables partagees). Inclus par solution-01.asm ET par chaque
+; module de ./lib qui en a besoin (assemblage standalone via le
+; Makefile) - d'ou la garde ci-dessous.
+;
+; IMPORTANT: tous les %include de ce projet sont ecrits comme des
+; chemins relatifs a la RACINE du dossier Solution-01 (ex:
+; "include/hardware.inc", "lib/common.asm") - PAS relatifs au
+; fichier qui fait le %include. NASM resout les %include par
+; rapport au repertoire courant (cwd) au moment de l'assemblage,
+; jamais par rapport a l'emplacement du fichier. Le Makefile lance
+; donc TOUJOURS nasm depuis la racine de Solution-01, meme pour
+; assembler un module de ./lib tout seul.
+; ============================================================
+%ifndef HARDWARE_INC
+%define HARDWARE_INC
+
+;*****************
+; CONST. PIO 1   *
+;*****************
+PORTA       EQU    10000000B   ;8255 ACTIVE PAR A7
+PORTB       EQU    10000001B
+PORTC       EQU    10000010B
+PIO         EQU    10000011B
+MASQUE_PIO  EQU    10000000B   ;PORT A,B ET C EN SORTIES
+; MASQUE_PIO2 EQU    10001001B   ;PORT A ET B EN SORTIES, C EN ENTREE
+
+; --- copie fantome du port A + compteurs de progression du test RAM:
+; --- vivent dans la zone deja reservee a la pile (segment VAR_SEG,
+; --- tout debut du dernier Ko non teste - voir "1 Ko reserve a la
+; --- pile" dans test_ram, solution-01.asm). 3 octets utilises sur
+; --- 1024 reserves. ---
+VAR_SEG             equ     1000h
+PORTA_SHADOW_OFF    equ     0FC00h
+BLOCK_COUNTER_OFF   equ     0FC01h  ; numero du bloc courant (1-127)
+DEFECT_COUNTER_OFF  equ     0FC02h  ; nombre de blocs ayant eu >=1 defaut
+
+%endif ; HARDWARE_INC
