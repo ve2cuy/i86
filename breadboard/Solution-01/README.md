@@ -212,14 +212,14 @@ open-drain), cette implémentation **n'accuse jamais réception (ACK)**
 | `i2c_start` / `i2c_stop` | Conditions START/STOP du protocole I2C |
 | `i2c_delay` | Demi-période SCL (~7,5 µs → ~45-66 kHz, sous le maximum 100 kHz du mode I2C "standard") |
 
-⚡ **Optimisations** (deux passes, voir Directives.md pour l'historique) :
+⚡ **Optimisations** (trois passes, voir Directives.md pour l'historique) :
 1. Les écritures PCF8574 (états `EN=0/1/0` par quartet) sont regroupées dans
    une seule transaction I2C par appel plutôt qu'une transaction séparée par
    écriture — l'overhead START+adresse+STOP n'est payé qu'une fois par
    quartet (`i2c_lcd_strobe`) ou par octet complet (`i2c_lcd_send_byte`), au
    lieu de 3× ou 6×.
-2. `i2c_start`/`i2c_stop`/`i2c_write_byte` lisent la copie fantôme du Port A
-   **une seule fois par appel** (pas par bit) et écrivent directement sur le
+2. `i2c_start`/`i2c_stop`/`i2c_write_byte` lisaient la copie fantôme du Port A
+   **une seule fois par appel** (pas par bit) et écrivaient directement sur le
    port (`out`) pour chaque transition SDA/SCL, au lieu de passer par un
    `i2c_set` intermédiaire qui relisait la copie fantôme via `porta_write`
    (lecture-modification-écriture complète, 5 `push`/`pop`) à **chaque bit**
@@ -227,6 +227,16 @@ open-drain), cette implémentation **n'accuse jamais réception (ACK)**
    — mesurée sur le matériel réel bien plus coûteuse que les délais
    volontaires eux-mêmes — qui dominait le temps total, pas la vitesse
    d'horloge I2C (`i2c_delay`, inchangée).
+3. La copie fantôme RAM (`PORTA_SHADOW`) n'est plus utilisée **du tout** par
+   ces 3 routines : remplacée par une lecture matérielle directe
+   `IN AL, PORTA`. Fiable sur un 8255A authentique (confirmé sur ce
+   montage) — un port configuré en sortie renvoie, à la lecture, le contenu
+   du **verrou de sortie** (comportement documenté du 8255A ; à revalider si
+   le 8255 change un jour pour un clone non garanti équivalent). Élimine le
+   passage par `VAR_SEG`/`ES`/`DI` entièrement dans ce module. Sans impact
+   sur `porta_write` (LCD parallèle/UART) : aucun de leurs masques ne couvre
+   `PA0`(`SCL`)/`PA5`(`SDA`), sauf le LCD parallèle qui écrit toujours
+   explicitement son propre bit `D4`/`PA0`.
 
 Réutilise `lcd_delay` / `lcd_delay_long` / `lcd_powerup_delay` de
 `lib/lcd.asm` pour les temps d'exécution propres au HD44780 (mêmes

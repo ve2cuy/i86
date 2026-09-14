@@ -98,36 +98,46 @@ i2c_delay:
 ; ============================================================
 ; i2c_start / i2c_stop / i2c_write_byte - ECRITURE PORT A "RAPIDE"
 ;
-; Version initiale: chaque bit passait par i2c_set (relit la copie
-; fantome via porta_write - lecture-modification-ecriture complete,
-; 5 push/pop - a CHAQUE bit). Sur le materiel reel, un dump de 16
-; octets (48 caracteres/commandes envoyes au LCD I2C) prenait plus
-; de 2,5 secondes (voir Directives.md) - largement plus que les
-; delais volontaires (i2c_delay) ne l'expliquent a eux seuls. La
-; VRAIE cause: la SURCHARGE D'APPELS DE PROCEDURE (i2c_write_byte ->
-; i2c_set -> porta_write, ~3 fois par bit, ~27 fois par octet).
+; Version 1: chaque bit passait par i2c_set (relit la copie fantome
+; via porta_write - lecture-modification-ecriture complete, 5
+; push/pop - a CHAQUE bit). Un dump de 16 octets (48 caracteres/
+; commandes envoyes au LCD I2C) prenait plus de 2,5 secondes sur le
+; materiel reel (voir Directives.md).
 ;
-; Ces 3 routines lisent maintenant la copie fantome UNE SEULE FOIS
-; par appel (pas par bit) dans BL, puis ecrivent directement sur le
-; port (mov al,bl / or.../ out PORTA,al - 2-3 instructions, aucun
-; appel) pour chaque transition SDA/SCL, et remettent a jour la
-; copie fantome UNE SEULE FOIS a la fin. Sans danger: aucune
-; interruption ne pilote le Port A dans ce projet, et rien d'autre
-; ne s'execute entre les etapes d'une meme transaction I2C - le
-; "reste" du Port A (D5-D7,RS,E,UART/PA7) ne peut donc pas changer
-; pendant ce temps.
+; Version 2: la copie fantome n'etait plus relue qu'UNE FOIS par
+; appel (pas par bit), via ES:DI - deja un gain important.
+;
+; Version 3 (actuelle): la copie fantome RAM (PORTA_SHADOW) n'est
+; plus utilisee DU TOUT par ces 3 routines - remplacee par une
+; lecture materielle directe "IN AL, PORTA". Fiable sur un 8255A
+; authentique (confirme sur ce montage): un port configure en
+; SORTIE renvoie, a la lecture, le contenu du VERROU DE SORTIE (pas
+; l'etat electrique des broches) - comportement documente de la
+; puce Intel 8255A (peut varier sur certains clones non garantis
+; equivalents - a valider si le 8255 change un jour sur ce montage).
+;
+; Consequence: plus besoin de VAR_SEG/ES/DI ni de maintenir
+; PORTA_SHADOW a jour depuis ce module - "IN AL,PORTA" (1
+; instruction) remplace "mov ax,VAR_SEG / mov es,ax / mov
+; di,PORTA_SHADOW_OFF / mov bl,[es:di]" (4 instructions, 2 registres
+; supplementaires a sauvegarder). Sans danger pour porta_write
+; (utilise par lcd.asm/uart.asm): aucun de ses appelants ne couvre
+; les bits PA0(SCL)/PA5(SDA) dans son masque sauf le LCD parallele,
+; qui ecrit TOUJOURS explicitement son propre bit D4/PA0 - la valeur
+; laissee par l'I2C sur PA0/PA5 entre deux transactions n'a donc
+; aucune influence sur le reste du projet.
+;
+; Toujours sans danger d'utiliser AL/BL/BH comme base+bits sans
+; relire a chaque bit: aucune interruption ne pilote le Port A dans
+; ce projet, et rien d'autre ne s'execute entre les etapes d'une
+; meme transaction I2C.
 ; ============================================================
 i2c_start:
         push    ax
         push    bx
-        push    es
-        push    di
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     di, PORTA_SHADOW_OFF
-        mov     bl, [es:di]
-        and     bl, I2C_BASE_MASK      ; BL = base (SDA/SCL effaces), pour toute
-                                         ; la duree de i2c_start
+        in      al, PORTA
+        and     al, I2C_BASE_MASK      ; efface SDA/SCL, garde le reste
+        mov     bl, al                 ; BL = base, pour toute la duree de i2c_start
 
         mov     al, bl
         or      al, I2C_MASK           ; SDA=1, SCL=1 (bus au repos)
@@ -143,9 +153,6 @@ i2c_start:
         out     PORTA, al
         call    i2c_delay
 
-        mov     [es:di], al             ; copie fantome mise a jour UNE fois
-        pop     di
-        pop     es
         pop     bx
         pop     ax
         ret
@@ -153,13 +160,9 @@ i2c_start:
 i2c_stop:
         push    ax
         push    bx
-        push    es
-        push    di
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     di, PORTA_SHADOW_OFF
-        mov     bl, [es:di]
-        and     bl, I2C_BASE_MASK
+        in      al, PORTA
+        and     al, I2C_BASE_MASK
+        mov     bl, al
 
         mov     al, bl                 ; SDA=0, SCL=0
         out     PORTA, al
@@ -173,9 +176,6 @@ i2c_stop:
         out     PORTA, al
         call    i2c_delay
 
-        mov     [es:di], al
-        pop     di
-        pop     es
         pop     bx
         pop     ax
         ret
@@ -196,15 +196,10 @@ i2c_write_byte:
         push    dx
         mov     dl, al          ; DL = octet a transmettre (copie de travail)
 
-        push    es
-        push    di
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     di, PORTA_SHADOW_OFF
-        mov     bl, [es:di]
-        and     bl, I2C_BASE_MASK      ; BL = base, pour tout cet octet (9 bits)
-        pop     di
-        pop     es
+        in      al, PORTA
+        and     al, I2C_BASE_MASK
+        mov     bl, al          ; BL = base, pour tout cet octet (9 bits) - voir
+                                 ; i2c_start pour la justification de IN PORTA
 
         mov     cl, 8
 .bitloop:
@@ -244,15 +239,6 @@ i2c_write_byte:
         mov     al, bl          ; SCL=0
         out     PORTA, al
         call    i2c_delay
-
-        push    es              ; copie fantome mise a jour UNE fois pour tout
-        push    di              ; l'octet (etat final: base, SDA=0, SCL=0)
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     di, PORTA_SHADOW_OFF
-        mov     [es:di], al
-        pop     di
-        pop     es
 
         pop     dx
         pop     cx
