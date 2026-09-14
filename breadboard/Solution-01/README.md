@@ -226,23 +226,29 @@ exigences, peu importe le transport parallèle ou I2C).
 
 ### Test de performance conditionnel (`TEST_I2C_DUMP`)
 
-`solution-01.asm` contient une directive `%define TEST_I2C_DUMP`,
-**commentée par défaut**, à la **ligne 86** (près du haut du fichier,
-avec `STACK_SEG`/`SECONDE`). La décommenter active un affichage supplémentaire, sur le
-LCD I2C, des 16 octets en hexadécimal de **chaque ligne** du dump ROM
-(`dump_line`) — 4 octets par ligne sur les 4 lignes du LCD 4×20 — en
-plus de ce qui s'affiche déjà sur le LCD parallèle et l'UART. Sert à
-mesurer/stresser le temps de réponse du LCD I2C sur 257 mises à jour
-complètes et successives. Aucun impact sur le comportement normal
-quand la directive reste désactivée (le code correspondant, gardé par
-`%ifdef TEST_I2C_DUMP`/`%endif` dans `dump_line` (lignes 433-448) et
-dans `i2c_dump_hex_line` (lignes 496-522), n'est simplement pas assemblé).
+Active un affichage supplémentaire, sur le LCD I2C, des 16 octets en
+hexadécimal de **chaque ligne** du dump ROM (`dump_line`) — 4 octets
+par ligne sur les 4 lignes du LCD 4×20 — en plus de ce qui s'affiche
+déjà sur le LCD parallèle et l'UART. Sert à mesurer/stresser le temps
+de réponse du LCD I2C sur 257 mises à jour complètes et successives.
+Aucun impact sur le comportement normal quand la directive reste
+désactivée : le code correspondant (dans `dump_line` et dans la
+procédure `i2c_dump_hex_line`) est entièrement gardé par
+`%ifdef TEST_I2C_DUMP` / `%endif` et n'est simplement pas assemblé.
 
-Activable aussi sans modifier le fichier, via la ligne de commande NASM :
+**Façon recommandée de l'activer — sans modifier le fichier** : passer
+la définition directement à NASM en ligne de commande, avec le flag `-d` :
 
 ```sh
 nasm -f bin -d TEST_I2C_DUMP solution-01.asm -o solution-01.bin
 ```
+
+Alternative : `solution-01.asm` contient aussi la ligne
+`%define TEST_I2C_DUMP`, **commentée par défaut**, dans le bloc de
+commentaires "TEST_I2C_DUMP" près du haut du fichier (avec
+`STACK_SEG`/`SECONDE`) — la décommenter active la directive de façon
+permanente pour tout `make`/`nasm` lancé sur ce fichier, sans avoir à
+répéter le flag `-d` à chaque fois.
 
 ## Outils nécessaires pour produire le `.bin` final
 
