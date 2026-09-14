@@ -205,6 +205,9 @@ open-drain), cette implémentation **n'accuse jamais réception (ACK)**
 | `i2c_lcd_send_byte` | Envoie 2 quartets × 3 états `EN` en **une seule transaction I2C** (1 START + adresse + 6 octets de données + 1 STOP) |
 | `i2c_lcd_strobe` | Envoie un quartet + `RS` avec l'impulsion `EN`, en une seule transaction I2C (1 START + adresse + 3 octets + STOP) |
 | `i2c_lcd_print` | Affiche une chaîne terminée par `0` depuis `DS:SI` |
+| `i2c_lcd_line1` … `i2c_lcd_line4` | Positionne le curseur DDRAM au début d'une des 4 lignes (mêmes adresses que `lcd_line1..4`) |
+| `i2c_lcd_show_line1` … `i2c_lcd_show_line4` | `i2c_lcd_lineN` + `i2c_lcd_print` en un seul appel (entrée : `DS:SI`) |
+| `i2c_lcd_tx_hex_nibble` / `i2c_lcd_tx_hex_byte` | Affiche une valeur en hexadécimal majuscule (entrée : `AL`) |
 | `i2c_write_byte` | Transmet un octet (8 bits, MSB en premier) sur le bus I2C |
 | `i2c_start` / `i2c_stop` | Conditions START/STOP du protocole I2C |
 | `i2c_set` | Positionne SDA/SCL simultanément via `porta_write` (masque `I2C_MASK`) |
@@ -220,6 +223,25 @@ rapide que l'implémentation initiale à une transaction par écriture.
 Réutilise `lcd_delay` / `lcd_delay_long` / `lcd_powerup_delay` de
 `lib/lcd.asm` pour les temps d'exécution propres au HD44780 (mêmes
 exigences, peu importe le transport parallèle ou I2C).
+
+### Test de performance conditionnel (`TEST_I2C_DUMP`)
+
+`solution-01.asm` contient une directive `%define TEST_I2C_DUMP`,
+**commentée par défaut**, près du haut du fichier (avec `STACK_SEG`/
+`SECONDE`). La décommenter active un affichage supplémentaire, sur le
+LCD I2C, des 16 octets en hexadécimal de **chaque ligne** du dump ROM
+(`dump_line`) — 4 octets par ligne sur les 4 lignes du LCD 4×20 — en
+plus de ce qui s'affiche déjà sur le LCD parallèle et l'UART. Sert à
+mesurer/stresser le temps de réponse du LCD I2C sur 257 mises à jour
+complètes et successives. Aucun impact sur le comportement normal
+quand la directive reste désactivée (le code correspondant, dans
+`dump_line` et `i2c_dump_hex_line`, n'est simplement pas assemblé).
+
+Activable aussi sans modifier le fichier, via la ligne de commande NASM :
+
+```sh
+nasm -f bin -d TEST_I2C_DUMP solution-01.asm -o solution-01.bin
+```
 
 ## Outils nécessaires pour produire le `.bin` final
 

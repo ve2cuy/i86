@@ -357,6 +357,92 @@ i2c_lcd_print:
         ret
 
 ; ============================================================
+; i2c_lcd_line1 / i2c_lcd_line2 / i2c_lcd_line3 / i2c_lcd_line4
+; Positionnement DDRAM, memes adresses que lcd_line1..4 (lcd.asm) -
+; meme convention "type A" pour un afficheur 4x20 (voir lcd.asm).
+; ============================================================
+i2c_lcd_line1:
+        push    ax
+        mov     al, 10000000b   ; Set DDRAM Address = 80h | 00h
+        call    i2c_lcd_command
+        pop     ax
+        ret
+
+i2c_lcd_line2:
+        push    ax
+        mov     al, 11000000b   ; Set DDRAM Address = 80h | 40h
+        call    i2c_lcd_command
+        pop     ax
+        ret
+
+i2c_lcd_line3:
+        push    ax
+        mov     al, 10010100b   ; Set DDRAM Address = 80h | 14h
+        call    i2c_lcd_command
+        pop     ax
+        ret
+
+i2c_lcd_line4:
+        push    ax
+        mov     al, 11010100b   ; Set DDRAM Address = 80h | 54h
+        call    i2c_lcd_command
+        pop     ax
+        ret
+
+; ============================================================
+; i2c_lcd_show_line1 / i2c_lcd_show_line2 / i2c_lcd_show_line3 /
+; i2c_lcd_show_line4
+; ============================================================
+i2c_lcd_show_line1:
+        call    i2c_lcd_line1
+        call    i2c_lcd_print
+        ret
+
+i2c_lcd_show_line2:
+        call    i2c_lcd_line2
+        call    i2c_lcd_print
+        ret
+
+i2c_lcd_show_line3:
+        call    i2c_lcd_line3
+        call    i2c_lcd_print
+        ret
+
+i2c_lcd_show_line4:
+        call    i2c_lcd_line4
+        call    i2c_lcd_print
+        ret
+
+; ============================================================
+; i2c_lcd_tx_hex_nibble / i2c_lcd_tx_hex_byte
+; Affiche une valeur en hexadecimal majuscule (reutilise hex_table
+; de lib/common.asm - meme table que lcd_tx_hex_* et uart_tx_hex_*).
+; ============================================================
+i2c_lcd_tx_hex_nibble:
+        push    bx
+        and     al, 0Fh
+        mov     bl, al
+        xor     bh, bh
+        mov     al, [hex_table + bx]
+        call    i2c_lcd_data
+        pop     bx
+        ret
+
+i2c_lcd_tx_hex_byte:
+        push    bx
+        mov     bl, al
+        mov     al, bl
+        shr     al, 1
+        shr     al, 1
+        shr     al, 1
+        shr     al, 1
+        call    i2c_lcd_tx_hex_nibble
+        mov     al, bl
+        call    i2c_lcd_tx_hex_nibble
+        pop     bx
+        ret
+
+; ============================================================
 ; i2c_lcd_init
 ; Sequence d'initialisation standard HD44780 en mode 4 bits, via le
 ; PCF8574 I2C. Reutilise lcd_powerup_delay/lcd_delay_long/lcd_delay

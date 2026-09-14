@@ -74,6 +74,18 @@ STACK_SEG       equ     1000h
 
 SECONDE         equ     1000            ; 1 seconde = 1000 ms
 
+; ------------------------------------------------------------
+; TEST_I2C_DUMP (decommenter la ligne %define ci-dessous pour
+; activer): affiche en plus, sur le LCD I2C (PCF8574 0x27), les 16
+; octets en hexadecimal de CHAQUE ligne du dump ROM (rom_dump/
+; dump_line), 4 octets par ligne sur les 4 lignes du LCD 4x20 - en
+; plus de ce qui s'affiche deja sur le LCD parallele et l'UART.
+; Sert a mesurer/stresser le temps de reponse du LCD I2C: 257 mises
+; a jour completes (une par ligne du dump), voir Directives.md.
+; Desactive par defaut (aucun impact sur le comportement normal).
+; %define TEST_I2C_DUMP
+; ------------------------------------------------------------
+
 %macro cls 0
         mov     si, CLS         ; efface l'ecran du terminal (ANSI)
         call    uart_tx_string
@@ -418,6 +430,22 @@ dump_line:
         mov     si, lcd_txt_ligne_suffix
         call    lcd_print
 
+%ifdef TEST_I2C_DUMP
+        ; --- LCD I2C (TEST_I2C_DUMP): dump complet des 16 octets en
+        ; hexadecimal, 4 par ligne sur les 4 lignes du LCD 4x20 - voir
+        ; la note pres de %define TEST_I2C_DUMP en haut du fichier ---
+        push    di
+        call    i2c_lcd_line1
+        call    i2c_dump_hex_line
+        call    i2c_lcd_line2
+        call    i2c_dump_hex_line
+        call    i2c_lcd_line3
+        call    i2c_dump_hex_line
+        call    i2c_lcd_line4
+        call    i2c_dump_hex_line
+        pop     di
+%endif
+
         ; --- UART: adresse reelle ES:DI ---
         mov     ax, es
         call    uart_tx_hex_word
@@ -464,6 +492,35 @@ dump_line:
         mov     si, txt_crlf
         call    uart_tx_string
         ret
+
+%ifdef TEST_I2C_DUMP
+; ============================================================
+; i2c_dump_hex_line (TEST_I2C_DUMP uniquement)
+; Affiche 4 octets en hexadecimal (separes par un espace) sur le
+; LCD I2C, a la position DDRAM courante (positionnee par l'appelant
+; - voir dump_line). "XX XX XX XX" = 11 caracteres, dans les 20
+; colonnes disponibles.
+; Entree:  ES:DI = 4 octets a afficher.
+; Sortie:  DI avance de 4.
+; ============================================================
+i2c_dump_hex_line:
+        push    ax
+        push    cx
+        mov     cx, 4
+.loop:
+        mov     al, [es:di]
+        call    i2c_lcd_tx_hex_byte
+        cmp     cx, 1
+        je      .last
+        mov     al, ' '
+        call    i2c_lcd_data
+.last:
+        inc     di
+        loop    .loop
+        pop     cx
+        pop     ax
+        ret
+%endif
 
 ; ============================================================
 ; msg_banniere
