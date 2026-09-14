@@ -112,6 +112,20 @@ start:
         mov     [es:di], al
         out     PORTA, al
 
+        ; --- Ecran de demarrage: affiche une seule fois (pas a chaque
+        ; cycle de .ici, contrairement au reste de l'affichage LCD),
+        ; pendant 3 secondes, avant d'entrer dans la boucle principale ---
+        call    lcd_init
+        mov     si, lcd_txt_splash_l1
+        call    lcd_show_line1
+        mov     si, lcd_txt_splash_l2
+        call    lcd_show_line2
+        mov     si, lcd_txt_splash_l3
+        call    lcd_show_line3
+        mov     si, lcd_txt_splash_l4
+        call    lcd_show_line4
+        delay_ms (3*SECONDE)
+
 .ici:
         cls                     ; efface l'ecran du terminal (ANSI)
         mov     si, txt_auteur
@@ -811,6 +825,20 @@ txt_auteur:             db      '8088 sur breadboard version 2026',13,10
 
 ; ---- textes LCD (20 caracteres, complete automatiquement par des
 ; ---- espaces via "times" - afficheur 4x20) ----
+
+; ---- ecran de demarrage (3 secondes, une seule fois - voir start:) ----
+lcd_txt_splash_l1:      db      'Breadboard 8088'
+                        times   20-($-lcd_txt_splash_l1) db ' '
+                        db      0
+lcd_txt_splash_l2:      db      'Version 1.0'
+                        times   20-($-lcd_txt_splash_l2) db ' '
+                        db      0
+lcd_txt_splash_l3:      times   20 db '-'
+                        db      0
+lcd_txt_splash_l4:      db      '(c) VE2CUY 2026'
+                        times   20-($-lcd_txt_splash_l4) db ' '
+                        db      0
+
 lcd_txt_step1_l1:       db      '1/3 - Test 8255'
                         times   20-($-lcd_txt_step1_l1) db ' '
                         db      0
