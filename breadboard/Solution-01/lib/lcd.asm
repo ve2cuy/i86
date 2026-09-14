@@ -299,37 +299,48 @@ lcd_tx_dec3:
 
 ; ============================================================
 ; Delais LCD
+; Calibration: meme motif d'instruction (dec bx / jnz) que
+; delay_ms_proc (voir lib/utils.asm, INNER_MS=265 pour ~1ms a
+; 4,77 MHz) -> 1 iteration ~ 1000/265 ~ 3,77 us.
+;
+; Valeurs resserrees au plus proche du minimum requis par le
+; HD44780 (datasheet, fOSC=270kHz), avec une legere marge de
+; securite (facteur indique par delai) pour absorber la tolerance
+; des afficheurs/horloges reels sur breadboard - au lieu des tres
+; grandes marges (jusqu'a ~50x) utilisees avant. Si l'affichage
+; devient instable sur le materiel reel, augmenter la marge la
+; plus serree en premier (lcd_delay, ~1,75x).
 ; ============================================================
-lcd_short_delai:        ; impulsion E / temps de setup-hold RS
+lcd_short_delai:        ; impulsion E (>=450ns) / cycle E (>=1us) - ~7,5us (~7-16x le minimum)
         push    bx
-        mov     bx, 0020h
+        mov     bx, 0002h
 .d:
         dec     bx
         jnz     .d
         pop     bx
         ret
 
-lcd_delay:               ; execution normale d'une commande/donnee (~40us typique)
+lcd_delay:               ; execution normale d'une commande/donnee (37-43us typique) - ~75us (~1,75x)
         push    bx
-        mov     bx, 0200h
+        mov     bx, 0014h
 .d:
         dec     bx
         jnz     .d
         pop     bx
         ret
 
-lcd_delay_long:          ; Clear/Home (>=1.52ms) et etapes du reveil 4 bits (>=4.1ms)
+lcd_delay_long:          ; Clear/Home (>=1,52ms) et etapes du reveil 4 bits (>=4,1ms, la plus contraignante) - ~5,8ms (~1,4x)
         push    bx
-        mov     bx, 4000h
+        mov     bx, 0600h
 .d:
         dec     bx
         jnz     .d
         pop     bx
         ret
 
-lcd_powerup_delay:       ; >= 15-40ms apres mise sous tension - grande marge
+lcd_powerup_delay:       ; >= 15-40ms apres mise sous tension - ~35ms (6x lcd_delay_long, ~2,3x le minimum de 15ms)
         push    cx
-        mov     cx, 0020h
+        mov     cx, 0006h
 .rep:
         push    cx
         call    lcd_delay_long
