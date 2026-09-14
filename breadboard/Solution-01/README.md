@@ -210,15 +210,23 @@ open-drain), cette implémentation **n'accuse jamais réception (ACK)**
 | `i2c_lcd_tx_hex_nibble` / `i2c_lcd_tx_hex_byte` | Affiche une valeur en hexadécimal majuscule (entrée : `AL`) |
 | `i2c_write_byte` | Transmet un octet (8 bits, MSB en premier) sur le bus I2C |
 | `i2c_start` / `i2c_stop` | Conditions START/STOP du protocole I2C |
-| `i2c_set` | Positionne SDA/SCL simultanément via `porta_write` (masque `I2C_MASK`) |
 | `i2c_delay` | Demi-période SCL (~7,5 µs → ~45-66 kHz, sous le maximum 100 kHz du mode I2C "standard") |
 
-⚡ **Optimisation** : les écritures PCF8574 (états `EN=0/1/0` par quartet) sont
-regroupées dans une seule transaction I2C par appel plutôt qu'une transaction
-séparée par écriture — l'overhead START+adresse+STOP n'est payé qu'une fois
-par quartet (`i2c_lcd_strobe`) ou par octet complet (`i2c_lcd_send_byte`), au
-lieu de 3× ou 6× — environ 2× (par quartet) à 6× (par octet complet) plus
-rapide que l'implémentation initiale à une transaction par écriture.
+⚡ **Optimisations** (deux passes, voir Directives.md pour l'historique) :
+1. Les écritures PCF8574 (états `EN=0/1/0` par quartet) sont regroupées dans
+   une seule transaction I2C par appel plutôt qu'une transaction séparée par
+   écriture — l'overhead START+adresse+STOP n'est payé qu'une fois par
+   quartet (`i2c_lcd_strobe`) ou par octet complet (`i2c_lcd_send_byte`), au
+   lieu de 3× ou 6×.
+2. `i2c_start`/`i2c_stop`/`i2c_write_byte` lisent la copie fantôme du Port A
+   **une seule fois par appel** (pas par bit) et écrivent directement sur le
+   port (`out`) pour chaque transition SDA/SCL, au lieu de passer par un
+   `i2c_set` intermédiaire qui relisait la copie fantôme via `porta_write`
+   (lecture-modification-écriture complète, 5 `push`/`pop`) à **chaque bit**
+   (~27 fois par octet PCF8574). C'est cette surcharge d'appels de procédure
+   — mesurée sur le matériel réel bien plus coûteuse que les délais
+   volontaires eux-mêmes — qui dominait le temps total, pas la vitesse
+   d'horloge I2C (`i2c_delay`, inchangée).
 
 Réutilise `lcd_delay` / `lcd_delay_long` / `lcd_powerup_delay` de
 `lib/lcd.asm` pour les temps d'exécution propres au HD44780 (mêmes

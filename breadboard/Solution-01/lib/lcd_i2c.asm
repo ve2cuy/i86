@@ -67,7 +67,9 @@ I2C_SDA         equ     00100000b       ; PA5
 I2C_SCL         equ     00000001b       ; PA0 (partagee avec D4 du LCD parallele -
                                          ; sans risque, voir l'en-tete: seul E/PA6
                                          ; declenche une capture sur le LCD parallele)
-I2C_MASK        equ     00100001b       ; bits 0 et 5 (SDA+SCL), pour porta_write
+I2C_MASK        equ     00100001b       ; bits 0 et 5 (SDA+SCL)
+I2C_BASE_MASK   equ     11011110b       ; NOT(I2C_MASK): efface SDA+SCL, garde le
+                                         ; reste du Port A (D5-D7,RS,E,UART/PA7)
 
 I2C_LCD_ADDR    equ     027h            ; adresse I2C 7 bits du PCF8574 (backpack LCD)
 
@@ -75,33 +77,6 @@ I2C_LCD_RS      equ     00000001b       ; P0 du PCF8574
 I2C_LCD_RW      equ     00000010b       ; P1 (jamais utilise: ecriture seule)
 I2C_LCD_EN      equ     00000100b       ; P2
 I2C_LCD_BL      equ     00001000b       ; P3 - retroeclairage, toujours actif ici
-
-; ============================================================
-; i2c_set
-; Positionne SDA et SCL simultanement via porta_write (masque
-; I2C_MASK) - ne touche jamais aux autres bits du Port A (donc ne
-; perturbe ni D4-D7/RS du LCD parallele, ni PA7/UART).
-; Entree: AL bit0 = SDA voulu (0/1), AL bit1 = SCL voulu (0/1) -
-; les autres bits d'AL sont ignores.
-; ============================================================
-i2c_set:
-        push    bx
-        push    cx
-        mov     cl, al
-        xor     al, al
-        test    cl, 00000001b
-        jz      .no_sda
-        or      al, I2C_SDA
-.no_sda:
-        test    cl, 00000010b
-        jz      .no_scl
-        or      al, I2C_SCL
-.no_scl:
-        mov     bl, I2C_MASK
-        call    porta_write
-        pop     cx
-        pop     bx
-        ret
 
 ; ============================================================
 ; i2c_delay
@@ -121,33 +96,87 @@ i2c_delay:
         ret
 
 ; ============================================================
-; i2c_start / i2c_stop
+; i2c_start / i2c_stop / i2c_write_byte - ECRITURE PORT A "RAPIDE"
+;
+; Version initiale: chaque bit passait par i2c_set (relit la copie
+; fantome via porta_write - lecture-modification-ecriture complete,
+; 5 push/pop - a CHAQUE bit). Sur le materiel reel, un dump de 16
+; octets (48 caracteres/commandes envoyes au LCD I2C) prenait plus
+; de 2,5 secondes (voir Directives.md) - largement plus que les
+; delais volontaires (i2c_delay) ne l'expliquent a eux seuls. La
+; VRAIE cause: la SURCHARGE D'APPELS DE PROCEDURE (i2c_write_byte ->
+; i2c_set -> porta_write, ~3 fois par bit, ~27 fois par octet).
+;
+; Ces 3 routines lisent maintenant la copie fantome UNE SEULE FOIS
+; par appel (pas par bit) dans BL, puis ecrivent directement sur le
+; port (mov al,bl / or.../ out PORTA,al - 2-3 instructions, aucun
+; appel) pour chaque transition SDA/SCL, et remettent a jour la
+; copie fantome UNE SEULE FOIS a la fin. Sans danger: aucune
+; interruption ne pilote le Port A dans ce projet, et rien d'autre
+; ne s'execute entre les etapes d'une meme transaction I2C - le
+; "reste" du Port A (D5-D7,RS,E,UART/PA7) ne peut donc pas changer
+; pendant ce temps.
 ; ============================================================
 i2c_start:
         push    ax
-        mov     al, 00000011b   ; SDA=1, SCL=1 (bus au repos)
-        call    i2c_set
+        push    bx
+        push    es
+        push    di
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, PORTA_SHADOW_OFF
+        mov     bl, [es:di]
+        and     bl, I2C_BASE_MASK      ; BL = base (SDA/SCL effaces), pour toute
+                                         ; la duree de i2c_start
+
+        mov     al, bl
+        or      al, I2C_MASK           ; SDA=1, SCL=1 (bus au repos)
+        out     PORTA, al
         call    i2c_delay
-        mov     al, 00000010b   ; SDA=0 pendant SCL=1 -> condition START
-        call    i2c_set
+
+        mov     al, bl
+        or      al, I2C_SCL            ; SDA=0, SCL=1 -> condition START
+        out     PORTA, al
         call    i2c_delay
-        mov     al, 00000000b   ; SCL=0 (pret pour le 1er bit)
-        call    i2c_set
+
+        mov     al, bl                 ; SDA=0, SCL=0 (pret pour le 1er bit)
+        out     PORTA, al
         call    i2c_delay
+
+        mov     [es:di], al             ; copie fantome mise a jour UNE fois
+        pop     di
+        pop     es
+        pop     bx
         pop     ax
         ret
 
 i2c_stop:
         push    ax
-        mov     al, 00000000b   ; SDA=0, SCL=0
-        call    i2c_set
+        push    bx
+        push    es
+        push    di
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, PORTA_SHADOW_OFF
+        mov     bl, [es:di]
+        and     bl, I2C_BASE_MASK
+
+        mov     al, bl                 ; SDA=0, SCL=0
+        out     PORTA, al
         call    i2c_delay
-        mov     al, 00000010b   ; SCL=1 (SDA toujours 0)
-        call    i2c_set
+
+        or      al, I2C_SCL            ; SCL=1 (SDA toujours 0)
+        out     PORTA, al
         call    i2c_delay
-        mov     al, 00000011b   ; SDA=1 pendant SCL=1 -> condition STOP
-        call    i2c_set
+
+        or      al, I2C_MASK           ; SDA=1 pendant SCL=1 -> condition STOP
+        out     PORTA, al
         call    i2c_delay
+
+        mov     [es:di], al
+        pop     di
+        pop     es
+        pop     bx
         pop     ax
         ret
 
@@ -155,9 +184,10 @@ i2c_stop:
 ; i2c_write_byte
 ; Transmet AL (8 bits, MSB en premier). Le 9e coup d'horloge (bit
 ; ACK) maintient SDA a 0 sans jamais le relacher a 1 - voir la note
-; en en-tete (sorties push-pull, pas open-drain): l'ACK n'est donc
-; jamais reellement verifie. Detruit AX/BX/CX/DX en apparence, mais
-; les preserve tous via push/pop (comme porta_write/uart_tx_byte).
+; en en-tete du fichier (sorties push-pull, pas open-drain): l'ACK
+; n'est donc jamais reellement verifie. Detruit AX/BX/CX/DX en
+; apparence, mais les preserve tous via push/pop (comme porta_write/
+; uart_tx_byte).
 ; ============================================================
 i2c_write_byte:
         push    ax
@@ -165,27 +195,39 @@ i2c_write_byte:
         push    cx
         push    dx
         mov     dl, al          ; DL = octet a transmettre (copie de travail)
+
+        push    es
+        push    di
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, PORTA_SHADOW_OFF
+        mov     bl, [es:di]
+        and     bl, I2C_BASE_MASK      ; BL = base, pour tout cet octet (9 bits)
+        pop     di
+        pop     es
+
         mov     cl, 8
 .bitloop:
         mov     al, dl
         and     al, 10000000b
         jz      .bit0
-        mov     bh, 1           ; BH = bit SDA courant (0/1), survit aux
-        jmp     .have_bit       ; appels i2c_set (qui preserve BX entier)
+        mov     bh, I2C_SDA     ; BH = bit SDA physique courant, SCL=0
+        jmp     .have_bit
 .bit0:
         mov     bh, 0
 .have_bit:
-        mov     al, bh          ; SDA=bh, SCL=0 (donnee posee, horloge basse)
-        call    i2c_set
+        mov     al, bl
+        or      al, bh          ; base + SDA, SCL=0 (donnee posee, horloge basse)
+        out     PORTA, al
         call    i2c_delay
 
-        mov     al, bh
-        or      al, 00000010b   ; SCL=1 (front montant: le PCF8574 lit SDA ICI)
-        call    i2c_set
+        or      al, I2C_SCL     ; SCL=1 (front montant: le PCF8574 lit SDA ICI)
+        out     PORTA, al
         call    i2c_delay
 
-        mov     al, bh          ; SCL=0 (fin du bit, SDA peut changer ensuite)
-        call    i2c_set
+        mov     al, bl
+        or      al, bh          ; SCL=0 (fin du bit, SDA peut changer ensuite)
+        out     PORTA, al
         call    i2c_delay
 
         shl     dl, 1
@@ -193,15 +235,24 @@ i2c_write_byte:
         jnz     .bitloop
 
         ; --- 9e coup d'horloge (bit ACK, jamais verifie - voir en-tete) ---
-        mov     al, 0           ; SDA=0, SCL=0
-        call    i2c_set
+        mov     al, bl          ; SDA=0, SCL=0
+        out     PORTA, al
         call    i2c_delay
-        mov     al, 00000010b   ; SCL=1
-        call    i2c_set
+        or      al, I2C_SCL     ; SCL=1
+        out     PORTA, al
         call    i2c_delay
-        mov     al, 0           ; SCL=0
-        call    i2c_set
+        mov     al, bl          ; SCL=0
+        out     PORTA, al
         call    i2c_delay
+
+        push    es              ; copie fantome mise a jour UNE fois pour tout
+        push    di              ; l'octet (etat final: base, SDA=0, SCL=0)
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, PORTA_SHADOW_OFF
+        mov     [es:di], al
+        pop     di
+        pop     es
 
         pop     dx
         pop     cx
