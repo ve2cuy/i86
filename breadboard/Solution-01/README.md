@@ -252,11 +252,14 @@ exigences, peu importe le transport parallèle ou I2C).
 
 ### Test de performance conditionnel (`TEST_I2C_DUMP`)
 
-Active un affichage supplémentaire, sur le LCD I2C, des 16 octets en
-hexadécimal de **chaque ligne** du dump ROM (`dump_line`) — 4 octets
-par ligne sur les 4 lignes du LCD 4×20 — en plus de ce qui s'affiche
-déjà sur le LCD parallèle et l'UART. Sert à mesurer/stresser le temps
-de réponse du LCD I2C sur 257 mises à jour complètes et successives.
+Active un affichage supplémentaire, sur le LCD I2C, des 16 octets de
+**chaque ligne** du dump ROM (`dump_line`) — 4 octets par ligne sur
+les 4 lignes du LCD 4×20, en hexadécimal suivis des 4 caractères ASCII
+correspondants (`.` pour les non imprimables, même règle que le dump
+UART) : `"XX XX XX XX ASCI"` = 16 des 20 colonnes — en plus de ce qui
+s'affiche déjà sur le LCD parallèle et l'UART. Sert à mesurer/stresser
+le temps de réponse du LCD I2C sur 257 mises à jour complètes et
+successives.
 Aucun impact sur le comportement normal quand la directive reste
 désactivée : le code correspondant (dans `dump_line` et dans la
 procédure `i2c_dump_hex_line`) est entièrement gardé par

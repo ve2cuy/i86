@@ -496,27 +496,54 @@ dump_line:
 %ifdef TEST_I2C_DUMP
 ; ============================================================
 ; i2c_dump_hex_line (TEST_I2C_DUMP uniquement)
-; Affiche 4 octets en hexadecimal (separes par un espace) sur le
-; LCD I2C, a la position DDRAM courante (positionnee par l'appelant
-; - voir dump_line). "XX XX XX XX" = 11 caracteres, dans les 20
-; colonnes disponibles.
+; Affiche 4 octets en hexadecimal (separes par un espace), un espace,
+; puis les 4 caracteres ASCII correspondants (ou '.' si non imprimable,
+; meme regle que le dump UART - voir plus bas) sur le LCD I2C, a la
+; position DDRAM courante (positionnee par l'appelant - voir
+; dump_line). "XX XX XX XX ASCI" = 11+1+4 = 16 caracteres, dans les
+; 20 colonnes disponibles.
 ; Entree:  ES:DI = 4 octets a afficher.
 ; Sortie:  DI avance de 4.
 ; ============================================================
 i2c_dump_hex_line:
         push    ax
         push    cx
+        push    si
+        mov     si, di          ; SI = copie du debut de bloc, pour relire
+                                 ; les memes 4 octets a la passe ASCII -
+                                 ; DI, lui, doit finir avance de 4 (contrat
+                                 ; de sortie, utilise par dump_line)
         mov     cx, 4
-.loop:
+.hex_loop:
         mov     al, [es:di]
         call    i2c_lcd_tx_hex_byte
         cmp     cx, 1
-        je      .last
+        je      .hex_last
         mov     al, ' '
         call    i2c_lcd_data
-.last:
+.hex_last:
         inc     di
-        loop    .loop
+        loop    .hex_loop
+
+        mov     al, ' '                 ; separateur entre hexa et ascii
+        call    i2c_lcd_data
+
+        mov     cx, 4
+.ascii_loop:
+        mov     al, [es:si]
+        cmp     al, 20h         ; < espace -> non imprimable
+        jb      .not_printable
+        cmp     al, 7Eh         ; > '~' -> non imprimable
+        ja      .not_printable
+        jmp     .print_char
+.not_printable:
+        mov     al, '.'
+.print_char:
+        call    i2c_lcd_data
+        inc     si
+        loop    .ascii_loop
+
+        pop     si
         pop     cx
         pop     ax
         ret
