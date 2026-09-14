@@ -210,102 +210,130 @@ i2c_write_byte:
         ret
 
 ; ============================================================
-; i2c_pcf_write
-; Transaction I2C complete: START, adresse PCF8574 (ecriture), UN
-; octet de donnees (P0-P7), STOP.
-; Entree: AL = octet a ecrire dans le PCF8574.
-; ============================================================
-i2c_pcf_write:
-        push    ax
-        push    bx
-        mov     bl, al          ; BL = octet de donnees a preserver
-        call    i2c_start
-        mov     al, I2C_LCD_ADDR
-        shl     al, 1           ; adresse 7 bits -> bit0 = R/W (0 = ecriture)
-        call    i2c_write_byte
-        mov     al, bl
-        call    i2c_write_byte
-        call    i2c_stop
-        pop     bx
-        pop     ax
-        ret
-
-; ============================================================
 ; i2c_lcd_strobe
 ; Envoie un quartet (deja aligne sur D4-D7, bits4-7) + RS au LCD
-; I2C, avec l'impulsion EN - 3 transactions I2C completes (EN=0,
-; EN=1, EN=0), chacune bien plus longue que le minimum d'impulsion
-; E exige par le HD44780 (le protocole I2C est ici le facteur
-; limitant, pas le HD44780).
+; I2C, avec l'impulsion EN (EN=0, EN=1, EN=0) - les 3 ecritures
+; PCF8574 sont REGROUPEES en UNE SEULE transaction I2C (1 START +
+; 1 adresse + 3 octets de donnees + 1 STOP) plutot que 3 transactions
+; separees comme dans la version initiale: l'overhead START/adresse/
+; STOP n'est paye qu'une fois (~3x plus rapide sur ce quartet, voir
+; Directives.md pour la mesure qui a motive ce changement). Meme
+; sequence electrique cote HD44780, donc toujours bien plus longue
+; que le minimum d'impulsion E exige.
 ; Entree: AL = quartet (bits4-7) + RS (bit0 = I2C_LCD_RS si donnee,
 ;         0 si commande). Le retroeclairage est ajoute automatiquement.
 ; ============================================================
 i2c_lcd_strobe:
         push    ax
         push    bx
-        mov     bl, al
-        or      bl, I2C_LCD_BL  ; retroeclairage toujours actif
+        or      al, I2C_LCD_BL  ; retroeclairage toujours actif
+        mov     bh, al          ; BH = octet PCF8574 de base (EN=0)
 
-        mov     al, bl          ; EN=0 (donnee/RS deja en place)
-        call    i2c_pcf_write
+        call    i2c_start
+        mov     al, I2C_LCD_ADDR
+        shl     al, 1           ; adresse 7 bits -> bit0 = R/W (0 = ecriture)
+        call    i2c_write_byte
 
-        mov     al, bl
+        mov     al, bh          ; EN=0 (donnee/RS deja en place)
+        call    i2c_write_byte
+        mov     al, bh
         or      al, I2C_LCD_EN  ; EN=1
-        call    i2c_pcf_write
+        call    i2c_write_byte
+        mov     al, bh          ; EN=0 (front descendant: capture reelle)
+        call    i2c_write_byte
 
-        mov     al, bl          ; EN=0 (front descendant: capture reelle)
-        call    i2c_pcf_write
+        call    i2c_stop
 
         pop     bx
         pop     ax
         ret
 
 ; ============================================================
-; i2c_lcd_command / i2c_lcd_data
-; Envoient un octet complet au LCD I2C en 2 quartets (fort puis
-; faible), puis attendent le temps d'execution du HD44780 (reutilise
-; lcd_delay de lib/lcd.asm - meme exigence, peu importe le transport).
-; Entree: AL = octet a envoyer. lcd_command: RS=0. lcd_data: RS=1.
+; i2c_lcd_send_byte
+; Envoie un octet complet (commande ou donnee) au LCD I2C: 2
+; quartets x 3 etats EN, comme 2 appels a i2c_lcd_strobe - mais
+; REGROUPES en UNE SEULE transaction I2C (1 START + 1 adresse + 6
+; octets de donnees + 1 STOP) au lieu de 2: overhead START/adresse/
+; STOP paye une seule fois pour tout l'octet (~2x plus rapide qu'un
+; double appel a i2c_lcd_strobe, ~6x plus rapide que la toute
+; premiere implementation a 6 transactions separees par octet -
+; voir Directives.md). Jamais appele directement ailleurs que par
+; i2c_lcd_command/i2c_lcd_data ci-dessous.
+; Entree: AL = octet complet a transmettre. BL bit0 = RS voulu
+; (0 = commande, I2C_LCD_RS = donnee).
 ; ============================================================
-i2c_lcd_command:
+i2c_lcd_send_byte:
         push    ax
+        push    bx
         push    cx
-        mov     ch, al
+        push    dx
 
+        mov     ch, al          ; CH = octet complet (commande/donnee)
+        mov     dl, bl          ; DL = RS voulu - survit a la preparation
+                                 ; des 2 quartets (voir i2c_write_byte,
+                                 ; qui preserve integralement AX/BX/CX/DX)
+
+        call    i2c_start
+        mov     al, I2C_LCD_ADDR
+        shl     al, 1
+        call    i2c_write_byte
+
+        ; --- quartet fort ---
         mov     al, ch
-        and     al, 11110000b   ; quartet fort deja aligne sur D4-D7
-        call    i2c_lcd_strobe
+        and     al, 11110000b
+        or      al, dl
+        or      al, I2C_LCD_BL
+        mov     bh, al          ; BH = octet PCF8574 de base (EN=0), quartet fort
+        call    i2c_write_byte  ; EN=0
+        mov     al, bh
+        or      al, I2C_LCD_EN
+        call    i2c_write_byte  ; EN=1
+        mov     al, bh          ; EN=0 (capture du quartet fort)
+        call    i2c_write_byte
 
+        ; --- quartet faible ---
         mov     al, ch
         and     al, 00001111b
         mov     cl, 4
         shl     al, cl          ; quartet faible -> D4-D7
-        call    i2c_lcd_strobe
+        or      al, dl
+        or      al, I2C_LCD_BL
+        mov     bh, al
+        call    i2c_write_byte  ; EN=0
+        mov     al, bh
+        or      al, I2C_LCD_EN
+        call    i2c_write_byte  ; EN=1
+        mov     al, bh          ; EN=0 (capture du quartet faible)
+        call    i2c_write_byte
 
+        call    i2c_stop
+
+        pop     dx
         pop     cx
+        pop     bx
         pop     ax
+        ret
+
+; ============================================================
+; i2c_lcd_command / i2c_lcd_data
+; Envoient un octet complet au LCD I2C (voir i2c_lcd_send_byte),
+; puis attendent le temps d'execution du HD44780 (reutilise
+; lcd_delay de lib/lcd.asm - meme exigence, peu importe le transport).
+; Entree: AL = octet a envoyer. lcd_command: RS=0. lcd_data: RS=1.
+; ============================================================
+i2c_lcd_command:
+        push    bx
+        mov     bl, 0
+        call    i2c_lcd_send_byte
+        pop     bx
         call    lcd_delay       ; reutilise lib/lcd.asm
         ret
 
 i2c_lcd_data:
-        push    ax
-        push    cx
-        mov     ch, al
-
-        mov     al, ch
-        and     al, 11110000b
-        or      al, I2C_LCD_RS
-        call    i2c_lcd_strobe
-
-        mov     al, ch
-        and     al, 00001111b
-        mov     cl, 4
-        shl     al, cl
-        or      al, I2C_LCD_RS
-        call    i2c_lcd_strobe
-
-        pop     cx
-        pop     ax
+        push    bx
+        mov     bl, I2C_LCD_RS
+        call    i2c_lcd_send_byte
+        pop     bx
         call    lcd_delay
         ret
 

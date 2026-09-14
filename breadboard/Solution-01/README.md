@@ -201,14 +201,21 @@ open-drain), cette implémentation **n'accuse jamais réception (ACK)**
 | Fonction | Rôle |
 |---|---|
 | `i2c_lcd_init` | Séquence d'initialisation HD44780 standard en 4 bits, via le PCF8574 |
-| `i2c_lcd_command` / `i2c_lcd_data` | Envoie un octet complet (2 quartets) au LCD I2C. Entrée : `AL` |
-| `i2c_lcd_strobe` | Envoie un quartet + `RS` avec l'impulsion `EN`, via 3 transactions I2C complètes |
+| `i2c_lcd_command` / `i2c_lcd_data` | Envoie un octet complet au LCD I2C (voir `i2c_lcd_send_byte`). Entrée : `AL` |
+| `i2c_lcd_send_byte` | Envoie 2 quartets × 3 états `EN` en **une seule transaction I2C** (1 START + adresse + 6 octets de données + 1 STOP) |
+| `i2c_lcd_strobe` | Envoie un quartet + `RS` avec l'impulsion `EN`, en une seule transaction I2C (1 START + adresse + 3 octets + STOP) |
 | `i2c_lcd_print` | Affiche une chaîne terminée par `0` depuis `DS:SI` |
-| `i2c_pcf_write` | Transaction I2C complète (START + adresse + un octet de données + STOP) |
 | `i2c_write_byte` | Transmet un octet (8 bits, MSB en premier) sur le bus I2C |
 | `i2c_start` / `i2c_stop` | Conditions START/STOP du protocole I2C |
 | `i2c_set` | Positionne SDA/SCL simultanément via `porta_write` (masque `I2C_MASK`) |
 | `i2c_delay` | Demi-période SCL (~7,5 µs → ~45-66 kHz, sous le maximum 100 kHz du mode I2C "standard") |
+
+⚡ **Optimisation** : les écritures PCF8574 (états `EN=0/1/0` par quartet) sont
+regroupées dans une seule transaction I2C par appel plutôt qu'une transaction
+séparée par écriture — l'overhead START+adresse+STOP n'est payé qu'une fois
+par quartet (`i2c_lcd_strobe`) ou par octet complet (`i2c_lcd_send_byte`), au
+lieu de 3× ou 6× — environ 2× (par quartet) à 6× (par octet complet) plus
+rapide que l'implémentation initiale à une transaction par écriture.
 
 Réutilise `lcd_delay` / `lcd_delay_long` / `lcd_powerup_delay` de
 `lib/lcd.asm` pour les temps d'exécution propres au HD44780 (mêmes
