@@ -23,6 +23,7 @@ ROM_OUT     = Z:/Partage/Alain/rom.bin
 LCD_BIN     = lib/bin/lcd.bin
 UART_BIN    = lib/bin/uart.bin
 UTILS_BIN   = lib/utils.bin
+LCD_I2C_BIN = lib/bin/lcd_i2c.bin
 
 # Dossier de sortie pour les .bin jetables de check-modules. On evite /tmp:
 # quand ce Makefile est lance par un make natif Windows (ex. WinAVR) qui
@@ -44,11 +45,11 @@ rom: $(ROM_BIN)
 	@echo "ROM copiee vers $(ROM_OUT)"
 
 $(ROM_BIN): solution-01.asm include/hardware.inc include/delay.inc \
-            lib/common.asm lib/lcd.asm lib/uart.asm lib/utils.asm
+            lib/common.asm lib/lcd.asm lib/uart.asm lib/utils.asm lib/lcd_i2c.asm
 	$(NASM) $(NASMFLAGS) solution-01.asm -o $(ROM_BIN)
 
-# --- Modules individuels (LCD, UART, delay_ms) ---
-lib: $(LCD_BIN) $(UART_BIN) $(UTILS_BIN)
+# --- Modules individuels (LCD, UART, delay_ms, LCD I2C) ---
+lib: $(LCD_BIN) $(UART_BIN) $(UTILS_BIN) $(LCD_I2C_BIN)
 
 $(LCD_BIN): lib/lcd.asm lib/common.asm include/hardware.inc | lib/bin
 	$(NASM) $(NASMFLAGS) lib/lcd.asm -o $(LCD_BIN)
@@ -59,6 +60,9 @@ $(UART_BIN): lib/uart.asm lib/common.asm include/hardware.inc | lib/bin
 $(UTILS_BIN): lib/utils.asm
 	$(NASM) $(NASMFLAGS) lib/utils.asm -o $(UTILS_BIN)
 
+$(LCD_I2C_BIN): lib/lcd_i2c.asm lib/lcd.asm lib/common.asm include/hardware.inc | lib/bin
+	$(NASM) $(NASMFLAGS) lib/lcd_i2c.asm -o $(LCD_I2C_BIN)
+
 lib/bin:
 	mkdir -p lib/bin
 
@@ -66,10 +70,11 @@ lib/bin:
 # lcd.asm/uart.asm) s'assemble seul sans erreur - sans produire de
 # .bin livre, juste un test rapide de coherence des %include ---
 check-modules: | $(CHECK_DIR)
-	$(NASM) $(NASMFLAGS) lib/common.asm -o $(CHECK_DIR)/_check_common.bin
-	$(NASM) $(NASMFLAGS) lib/lcd.asm    -o $(CHECK_DIR)/_check_lcd.bin
-	$(NASM) $(NASMFLAGS) lib/uart.asm   -o $(CHECK_DIR)/_check_uart.bin
-	$(NASM) $(NASMFLAGS) lib/utils.asm  -o $(CHECK_DIR)/_check_utils.bin
+	$(NASM) $(NASMFLAGS) lib/common.asm  -o $(CHECK_DIR)/_check_common.bin
+	$(NASM) $(NASMFLAGS) lib/lcd.asm     -o $(CHECK_DIR)/_check_lcd.bin
+	$(NASM) $(NASMFLAGS) lib/uart.asm    -o $(CHECK_DIR)/_check_uart.bin
+	$(NASM) $(NASMFLAGS) lib/utils.asm   -o $(CHECK_DIR)/_check_utils.bin
+	$(NASM) $(NASMFLAGS) lib/lcd_i2c.asm -o $(CHECK_DIR)/_check_lcd_i2c.bin
 	@echo "Tous les modules s'assemblent individuellement - OK"
 
 $(CHECK_DIR):
@@ -81,5 +86,5 @@ check: $(ROM_BIN)
 	python3 check_rom.py $(ROM_BIN)
 
 clean:
-	rm -f $(ROM_BIN) $(LCD_BIN) $(UART_BIN) $(UTILS_BIN)
+	rm -f $(ROM_BIN) $(LCD_BIN) $(UART_BIN) $(UTILS_BIN) $(LCD_I2C_BIN)
 	rm -rf $(CHECK_DIR)

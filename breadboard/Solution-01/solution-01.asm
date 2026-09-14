@@ -112,6 +112,15 @@ start:
         mov     [es:di], al
         out     PORTA, al
 
+        ; --- Test du LCD I2C (PCF8574 0x27, SDA=PA5, SCL=PA6): une
+        ; seule fois au demarrage, AVANT l'init du LCD PARALLELE
+        ; ci-dessous (qui reinitialise ce dernier de toute facon -
+        ; voir lib/lcd_i2c.asm pour la note sur le partage de PA6/E
+        ; entre les deux LCD, jamais pilotes en meme temps) ---
+        call    i2c_lcd_init
+        mov     si, i2c_txt_hello
+        call    i2c_lcd_print   ; DDRAM deja en ligne 1 (Clear Display dans i2c_lcd_init)
+
         ; --- Ecran de demarrage: affiche une seule fois (pas a chaque
         ; cycle de .ici, contrairement au reste de l'affichage LCD),
         ; pendant 3 secondes, avant d'entrer dans la boucle principale ---
@@ -785,6 +794,7 @@ delay2:
 %include "lib/lcd.asm"
 %include "lib/uart.asm"
 %include "lib/utils.asm"
+%include "lib/lcd_i2c.asm"
 
 ; -------------------------------------------------------------------------------------------------
 ; Section suivante: donnees et textes
@@ -822,6 +832,10 @@ txt_8255_init:           db      27,'[33m','*** Test des 8255 (effet1) - solutio
 txt_auteur:             db      '8088 sur breadboard version 2026',13,10
                         db      'Par Alain Boudreault, aka VE2CUY',13,10
                         db      '--------------------------------',13,10,13,10,0
+
+; ---- texte du LCD I2C (PCF8574 0x27) - pas de padding, pas de
+; ---- largeur fixe imposee comme sur le LCD parallele ----
+i2c_txt_hello:          db      'Hello World', 0
 
 ; ---- textes LCD (20 caracteres, complete automatiquement par des
 ; ---- espaces via "times" - afficheur 4x20) ----

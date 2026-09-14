@@ -8,7 +8,7 @@ J'ai déplacé la solution-01.asm dans le dossier Solution-01
 * Avec le Make file, produire un fichier .bin pour chacune des procédures (LCD et UART), et enregister sous ./lib/bin.  Enregister delay_ms dans ./lib/utils.bin
 * Enregister le fichier .bin du ROM sous Z:\Partage\Alain\rom.bin 
 
-* Dans un nouveau fichier, programmer un accès I2C, en bit banging, sur PA5, pour un LCD. L'adresse I2C du LCD est 0x27.
+* Dans un nouveau fichier, programmer un accès I2C, en bit banging, sur PA5 et PA6, pour un LCD. L'adresse I2C du LCD est 0x27.
 * Incorporer un test de cette nouvelle fonctionnalité dans l'application, par exemple, en affichant Hello World sur le LCD-I2C au démarrage. 
 
 Suite à discussion avec Claude Code (session du 14 septembre 2026), voici les tâches demandées et réalisées:

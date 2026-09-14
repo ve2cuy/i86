@@ -3,17 +3,22 @@
 Firmware ROM pour un ordinateur 8088/8086 assemblé sur breadboard par
 Alain Boudreault (VE2CUY). Au démarrage, la carte :
 
-1. affiche un écran de démarrage sur un LCD 4×20 pendant 3 secondes ;
-2. anime le Port C du 8255 (chenillard) pendant que la ligne UART
+1. affiche "Hello World" sur un second LCD, piloté en I2C logiciel
+   (bit-bang), en guise de test de cette fonctionnalité ;
+2. affiche un écran de démarrage sur le LCD parallèle 4×20 pendant
+   3 secondes ;
+3. anime le Port C du 8255 (chenillard) pendant que la ligne UART
    transmet un bandeau de bienvenue ;
-3. teste la totalité de la RAM statique (128 Ko) et rapporte le
+4. teste la totalité de la RAM statique (128 Ko) et rapporte le
    résultat (UART + LCD) ;
-4. fait un dump hexadécimal des 4 premiers Ko de la ROM (+ les 16
+5. fait un dump hexadécimal des 4 premiers Ko de la ROM (+ les 16
    derniers octets : vecteur de reset et signature) ;
-5. reboucle indéfiniment.
+6. reboucle indéfiniment (sans reprendre le test du LCD I2C, qui ne
+   tourne qu'une fois).
 
 Ce cycle sert de "power-on self-test" (POST) pour valider le montage
-matériel (8255, RAM, LCD, UART) à chaque mise sous tension.
+matériel (8255, RAM, LCD parallèle, LCD I2C, UART) à chaque mise sous
+tension.
 
 ## Matériel visé
 
@@ -22,20 +27,26 @@ matériel (8255, RAM, LCD, UART) à chaque mise sous tension.
   un vrai 8088)
 - ROM 256 Ko, mappée à l'adresse physique `C0000h-FFFFFh`
 - RAM statique 128 Ko
-- Un 8255 (PIO) : Port A partagé entre le LCD et l'UART logiciel
-  (bit-bang), Port C utilisé pour l'animation du POST
-- Câblage du Port A (voir l'en-tête de `solution-01.asm`) :
-  - `PA0-PA3` → `D4-D7` du LCD
-  - `PA4` → `RS` du LCD
-  - `PA6` → `E` du LCD (R/W du LCD à la masse)
+- Un 8255 (PIO) : Port A entièrement occupé (LCD parallèle, UART
+  logiciel et LCD I2C logiciel), Port C utilisé pour l'animation du POST
+- Câblage du Port A (voir l'en-tête de `solution-01.asm`) — **les 8
+  bits sont utilisés** :
+  - `PA0-PA3` → `D4-D7` du LCD parallèle
+  - `PA4` → `RS` du LCD parallèle
+  - `PA5` → `SDA` du LCD I2C (PCF8574)
+  - `PA6` → `E` du LCD parallèle **ET** `SCL` du LCD I2C (broche
+    partagée — voir `lib/lcd_i2c.asm`, les deux LCD ne sont jamais
+    pilotés en même temps)
   - `PA7` → ligne UART (remplace un ancien latch 74LS373 externe)
-- LCD HD44780 4 lignes × 20 caractères, piloté en mode 4 bits
+- LCD parallèle HD44780 4 lignes × 20 caractères, piloté en mode 4 bits
+- LCD I2C HD44780 (derrière un expandeur PCF8574, adresse `0x27` —
+  "backpack" standard), piloté en I2C logiciel
 
-Comme le LCD et l'UART se partagent le même octet matériel (le 8255
-en mode 0 n'adresse pas le Port A bit à bit), toute écriture sur ce
-port passe par `porta_write` (voir `lib/common.asm`), qui ne modifie
-que les bits concernés et préserve les autres via une copie fantôme
-en RAM.
+Comme le LCD parallèle, l'UART et le LCD I2C se partagent le même
+octet matériel (le 8255 en mode 0 n'adresse pas le Port A bit à bit),
+toute écriture sur ce port passe par `porta_write` (voir
+`lib/common.asm`), qui ne modifie que les bits concernés et préserve
+les autres via une copie fantôme en RAM.
 
 ## Schéma bloc du circuit électronique
 
@@ -74,8 +85,9 @@ flowchart TD
     end
 
     subgraph PERIPH["Peripheriques (Port A du 8255, partage via porta_write)"]
-        LCD["LCD HD44780 4x20\nPA0-PA3=D4-D7, PA4=RS, PA6=E"]
+        LCD["LCD parallele HD44780 4x20\nPA0-PA3=D4-D7, PA4=RS, PA6=E"]
         UART["UART logiciel 9600 8N1\nPA7 (bit-bang)"]
+        I2CLCD["LCD I2C (PCF8574 0x27)\nPA5=SDA, PA6=SCL (partagee avec E)"]
     end
 
     LED["Port C: chenillard (animation POST)"]
@@ -95,6 +107,7 @@ flowchart TD
 
     PIO --> LCD
     PIO --> UART
+    PIO --> I2CLCD
     PIO --> LED
 ```
 
@@ -122,17 +135,18 @@ Solution-01/
 │   │                      des variables partagées)
 │   └── delay.inc          Macro `delay_ms` (voir lib/utils.asm)
 └── lib/
-    ├── common.asm         porta_write (accès partagé LCD/UART au
-    │                      Port A) + hex_table
-    ├── lcd.asm            Toutes les procédures d'affichage LCD
+    ├── common.asm         porta_write (accès partagé LCD/UART/LCD-I2C
+    │                      au Port A) + hex_table
+    ├── lcd.asm            Toutes les procédures d'affichage du LCD parallèle
     ├── uart.asm           Toutes les procédures de transmission UART
     ├── utils.asm          delay_ms_proc (routine derrière la macro)
-    └── bin/                (généré) lcd.bin, uart.bin
+    ├── lcd_i2c.asm        Accès I2C logiciel (bit-bang) au LCD PCF8574 0x27
+    └── bin/                (généré) lcd.bin, uart.bin, lcd_i2c.bin
 ```
 
 Fichiers générés par `make` (non versionnés, voir `.gitignore`) :
 `solution-01.bin`, `lib/bin/lcd.bin`, `lib/bin/uart.bin`,
-`lib/utils.bin`, `build/check/*.bin`.
+`lib/utils.bin`, `lib/bin/lcd_i2c.bin`, `build/check/*.bin`.
 
 **Règle importante** : tous les `%include` du projet sont écrits comme
 des chemins relatifs à **cette racine** (`Solution-01/`), jamais
@@ -166,6 +180,31 @@ Transmission série logicielle (bit-bang, 9600 8N1) sur `PA7`.
 | `uart_bit_delay` | Délai d'un bit, calibré (`UART_BIT_COUNT`) pour ~9600 bauds — **valeur mesurée à l'analyseur logique sur ce montage, ne pas modifier sans re-mesurer** |
 | `uart_tx_hex_nibble` / `uart_tx_hex_byte` / `uart_tx_hex_word` | Affiche une valeur en hexadécimal majuscule (entrée : `AL` ou `AX`) |
 
+## Fonctions d'accès au LCD I2C (`lib/lcd_i2c.asm`)
+
+Second LCD HD44780, derrière un expandeur I2C PCF8574 (adresse
+`0x27`), piloté en I2C **logiciel** (bit-bang) sur `SDA=PA5` /
+`SCL=PA6` (SCL partagée avec `E` du LCD parallèle — jamais utilisée
+en même temps). Le Port A du 8255 étant configuré tout en sortie
+(push-pull, pas open-drain), cette implémentation **n'accuse jamais
+réception (ACK)** — voir l'en-tête du fichier pour le détail.
+
+| Fonction | Rôle |
+|---|---|
+| `i2c_lcd_init` | Séquence d'initialisation HD44780 standard en 4 bits, via le PCF8574 |
+| `i2c_lcd_command` / `i2c_lcd_data` | Envoie un octet complet (2 quartets) au LCD I2C. Entrée : `AL` |
+| `i2c_lcd_strobe` | Envoie un quartet + `RS` avec l'impulsion `EN`, via 3 transactions I2C complètes |
+| `i2c_lcd_print` | Affiche une chaîne terminée par `0` depuis `DS:SI` |
+| `i2c_pcf_write` | Transaction I2C complète (START + adresse + un octet de données + STOP) |
+| `i2c_write_byte` | Transmet un octet (8 bits, MSB en premier) sur le bus I2C |
+| `i2c_start` / `i2c_stop` | Conditions START/STOP du protocole I2C |
+| `i2c_set` | Positionne SDA/SCL simultanément via `porta_write` (masque `I2C_MASK`) |
+| `i2c_delay` | Demi-période SCL (~7,5 µs → ~45-66 kHz, sous le maximum 100 kHz du mode I2C "standard") |
+
+Réutilise `lcd_delay` / `lcd_delay_long` / `lcd_powerup_delay` de
+`lib/lcd.asm` pour les temps d'exécution propres au HD44780 (mêmes
+exigences, peu importe le transport parallèle ou I2C).
+
 ## Outils nécessaires pour produire le `.bin` final
 
 | Outil | Rôle |
@@ -179,7 +218,7 @@ Transmission série logicielle (bit-bang, 9600 8N1) sur `PA7`.
 ```sh
 make          # construit tout : ROM complète + modules individuels
 make rom      # ROM complète, copiée vers Z:\Partage\Alain\rom.bin
-make lib      # modules individuels (lib/bin/lcd.bin, lib/bin/uart.bin, lib/utils.bin)
+make lib      # modules individuels (lib/bin/lcd.bin, lib/bin/uart.bin, lib/utils.bin, lib/bin/lcd_i2c.bin)
 make check    # assemble la ROM puis valide sa structure (check_rom.py)
 make check-modules  # verifie que chaque module s'assemble seul, sans erreur
 make clean    # supprime tous les .bin generes
