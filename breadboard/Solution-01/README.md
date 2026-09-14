@@ -31,12 +31,14 @@ tension.
   logiciel et LCD I2C logiciel), Port C utilisé pour l'animation du POST
 - Câblage du Port A (voir l'en-tête de `solution-01.asm`) — **les 8
   bits sont utilisés** :
-  - `PA0-PA3` → `D4-D7` du LCD parallèle
+  - `PA0` → `D4` du LCD parallèle **ET** `SCL` du LCD I2C (broche
+    partagée — voir `lib/lcd_i2c.asm` : sans risque, car le HD44780
+    ne capture les lignes de données que sur un front descendant de
+    `E`, jamais touchée par le module I2C)
+  - `PA1-PA3` → `D5-D7` du LCD parallèle
   - `PA4` → `RS` du LCD parallèle
   - `PA5` → `SDA` du LCD I2C (PCF8574)
-  - `PA6` → `E` du LCD parallèle **ET** `SCL` du LCD I2C (broche
-    partagée — voir `lib/lcd_i2c.asm`, les deux LCD ne sont jamais
-    pilotés en même temps)
+  - `PA6` → `E` du LCD parallèle (dédiée, jamais touchée par le module I2C)
   - `PA7` → ligne UART (remplace un ancien latch 74LS373 externe)
 - LCD parallèle HD44780 4 lignes × 20 caractères, piloté en mode 4 bits
 - LCD I2C HD44780 (derrière un expandeur PCF8574, adresse `0x27` —
@@ -87,7 +89,7 @@ flowchart TD
     subgraph PERIPH["Peripheriques (Port A du 8255, partage via porta_write)"]
         LCD["LCD parallele HD44780 4x20\nPA0-PA3=D4-D7, PA4=RS, PA6=E"]
         UART["UART logiciel 9600 8N1\nPA7 (bit-bang)"]
-        I2CLCD["LCD I2C (PCF8574 0x27)\nPA5=SDA, PA6=SCL (partagee avec E)"]
+        I2CLCD["LCD I2C (PCF8574 0x27)\nPA5=SDA, PA0=SCL (partagee avec D4, sans risque)"]
     end
 
     LED["Port C: chenillard (animation POST)"]
@@ -184,10 +186,17 @@ Transmission série logicielle (bit-bang, 9600 8N1) sur `PA7`.
 
 Second LCD HD44780, derrière un expandeur I2C PCF8574 (adresse
 `0x27`), piloté en I2C **logiciel** (bit-bang) sur `SDA=PA5` /
-`SCL=PA6` (SCL partagée avec `E` du LCD parallèle — jamais utilisée
-en même temps). Le Port A du 8255 étant configuré tout en sortie
-(push-pull, pas open-drain), cette implémentation **n'accuse jamais
-réception (ACK)** — voir l'en-tête du fichier pour le détail.
+`SCL=PA0` (`PA0` partagée avec `D4` du LCD parallèle, mais **sans
+risque** : le HD44780 ne capture les lignes de données que sur un
+front descendant de `E` — jamais touchée par ce module — donc le
+trafic I2C lui est invisible. **`i2c_lcd_*` peut être appelé
+n'importe où dans le projet**, même pendant un affichage actif sur
+le LCD parallèle, sans avoir besoin d'un `lcd_init` après coup — voir
+l'en-tête de `lib/lcd_i2c.asm` pour le détail, y compris l'essai
+initial avec `SCL` sur `PA6`/`E`, abandonné pour cette raison). Le
+Port A du 8255 étant configuré tout en sortie (push-pull, pas
+open-drain), cette implémentation **n'accuse jamais réception (ACK)**
+— voir l'en-tête du fichier pour le détail.
 
 | Fonction | Rôle |
 |---|---|

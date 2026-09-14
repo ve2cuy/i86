@@ -5,17 +5,22 @@
 ; "LCM1602 IIC"), pilote en I2C logiciel (bit-bang) sur 2 bits du
 ; Port A du 8255:
 ;   PA5 = SDA
-;   PA6 = SCL - PARTAGEE avec E du LCD PARALLELE (lcd.asm). PA5
+;   PA0 = SCL - PARTAGEE avec D4 du LCD PARALLELE (lcd.asm). PA5
 ;         etait le SEUL bit encore libre sur tout le Port A
 ;         (PA0-PA3=D4-D7, PA4=RS, PA6=E, PA7=UART - voir l'en-tete
 ;         de solution-01.asm), donc pas assez pour SDA+SCL seuls:
-;         SCL reutilise PA6, en s'appuyant sur le fait que les deux
-;         LCD ne sont JAMAIS pilotes en meme temps (voir la garde
-;         dans solution-01.asm: le test I2C tourne une seule fois
-;         au demarrage, AVANT l'init du LCD parallele, qui le
-;         reinitialise proprement juste apres - un eventuel front E
-;         parasite sur le LCD parallele pendant le test I2C est
-;         donc sans consequence visible).
+;         SCL reutilise PA0. Contrairement a un partage avec E
+;         (PA6, essaye puis abandonne), ce choix est SANS RISQUE
+;         de corruption meme si le LCD parallele affiche du contenu
+;         actif pendant une transaction I2C: le HD44780 ne capture
+;         quoi que ce soit sur D4-D7/RS que sur un front descendant
+;         de E (voir lcd_strobe dans lcd.asm) - or ce module ne
+;         touche JAMAIS a PA6/E. Le bruit I2C sur PA0/D4 est donc
+;         invisible au LCD parallele tant que E ne bouge pas.
+;         Consequence: i2c_lcd_* peut etre appele N'IMPORTE OU dans
+;         le projet, y compris en plein milieu d'un affichage actif
+;         sur le LCD parallele, sans avoir besoin d'un lcd_init
+;         apres coup.
 ;
 ; Contrainte materielle importante: le 8255 (mode 0) configure TOUT
 ; le Port A en SORTIE - ses broches sont donc des sorties push-pull
@@ -59,8 +64,10 @@
 %include "lib/lcd.asm"          ; reutilise lcd_delay/lcd_delay_long/lcd_powerup_delay
 
 I2C_SDA         equ     00100000b       ; PA5
-I2C_SCL         equ     01000000b       ; PA6 (partagee avec E du LCD parallele)
-I2C_MASK        equ     01100000b       ; bits 5-6 (SDA+SCL), pour porta_write
+I2C_SCL         equ     00000001b       ; PA0 (partagee avec D4 du LCD parallele -
+                                         ; sans risque, voir l'en-tete: seul E/PA6
+                                         ; declenche une capture sur le LCD parallele)
+I2C_MASK        equ     00100001b       ; bits 0 et 5 (SDA+SCL), pour porta_write
 
 I2C_LCD_ADDR    equ     027h            ; adresse I2C 7 bits du PCF8574 (backpack LCD)
 

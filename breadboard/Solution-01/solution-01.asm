@@ -112,11 +112,12 @@ start:
         mov     [es:di], al
         out     PORTA, al
 
-        ; --- Test du LCD I2C (PCF8574 0x27, SDA=PA5, SCL=PA6): une
-        ; seule fois au demarrage, AVANT l'init du LCD PARALLELE
-        ; ci-dessous (qui reinitialise ce dernier de toute facon -
-        ; voir lib/lcd_i2c.asm pour la note sur le partage de PA6/E
-        ; entre les deux LCD, jamais pilotes en meme temps) ---
+        ; --- Test du LCD I2C (PCF8574 0x27, SDA=PA5, SCL=PA0): une
+        ; seule fois au demarrage. PA0 est partagee avec D4 du LCD
+        ; PARALLELE mais sans risque (voir lib/lcd_i2c.asm) - donc
+        ; PAS besoin d'etre place avant lcd_init comme le serait un
+        ; partage avec E; place ici simplement pour rester groupe
+        ; avec le reste de l'init materielle ---
         call    i2c_lcd_init
         mov     si, i2c_txt_hello
         call    i2c_lcd_print   ; DDRAM deja en ligne 1 (Clear Display dans i2c_lcd_init)
