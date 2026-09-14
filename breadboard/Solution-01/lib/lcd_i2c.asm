@@ -82,13 +82,21 @@ I2C_LCD_BL      equ     00001000b       ; P3 - retroeclairage, toujours actif ic
 ; i2c_delay
 ; Demi-periode SCL. Meme motif d'instruction (dec bx/jnz) que les
 ; autres delais du projet (voir lib/utils.asm, INNER_MS=265 pour
-; ~1ms a 4,77MHz) -> 1 iteration ~3,77us. bx=2 -> ~7,5us/demi-
-; periode -> cycle SCL complet ~15-22us selon le nombre d'appels
-; (~45-66kHz), bien sous le maximum 100kHz du mode I2C "standard".
+; ~1ms a 4,77MHz) -> 1 iteration ~3,77us. bx=1 -> ~3,77us/appel - 3
+; appels par bit (voir i2c_write_byte) -> cycle SCL complet ~11,3us
+; -> ~88,5kHz, sous le maximum 100kHz du mode I2C "standard" mais
+; avec une marge nettement plus serree (~13%) que la valeur
+; precedente (bx=2, ~44,4kHz, ~125% de marge). A resserrer en
+; PREMIER (revenir a bx=2) si le LCD I2C devient instable sur le
+; materiel reel - voir Directives.md pour la mesure qui a motive
+; cette reduction (peu d'effet percu par rapport a l'optimisation
+; precedente, qui eliminait l'essentiel de la surcharge d'appels -
+; celle-ci ne reduit que le plancher impose par i2c_delay lui-meme,
+; ~189 appels par transaction).
 ; ============================================================
 i2c_delay:
         push    bx
-        mov     bx, 0002h
+        mov     bx, 0001h
 .d:
         dec     bx
         jnz     .d

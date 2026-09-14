@@ -210,9 +210,9 @@ open-drain), cette implémentation **n'accuse jamais réception (ACK)**
 | `i2c_lcd_tx_hex_nibble` / `i2c_lcd_tx_hex_byte` | Affiche une valeur en hexadécimal majuscule (entrée : `AL`) |
 | `i2c_write_byte` | Transmet un octet (8 bits, MSB en premier) sur le bus I2C |
 | `i2c_start` / `i2c_stop` | Conditions START/STOP du protocole I2C |
-| `i2c_delay` | Demi-période SCL (~7,5 µs → ~45-66 kHz, sous le maximum 100 kHz du mode I2C "standard") |
+| `i2c_delay` | Demi-période SCL (~3,77 µs → ~88,5 kHz, sous le maximum 100 kHz du mode I2C "standard", marge ~13%) |
 
-⚡ **Optimisations** (trois passes, voir Directives.md pour l'historique) :
+⚡ **Optimisations** (quatre passes, voir Directives.md pour l'historique) :
 1. Les écritures PCF8574 (états `EN=0/1/0` par quartet) sont regroupées dans
    une seule transaction I2C par appel plutôt qu'une transaction séparée par
    écriture — l'overhead START+adresse+STOP n'est payé qu'une fois par
@@ -236,7 +236,15 @@ open-drain), cette implémentation **n'accuse jamais réception (ACK)**
    passage par `VAR_SEG`/`ES`/`DI` entièrement dans ce module. Sans impact
    sur `porta_write` (LCD parallèle/UART) : aucun de leurs masques ne couvre
    `PA0`(`SCL`)/`PA5`(`SDA`), sauf le LCD parallèle qui écrit toujours
-   explicitement son propre bit `D4`/`PA0`.
+   explicitement son propre bit `D4`/`PA0`. **Gain marginal en pratique** —
+   contrairement à l'optimisation 2, celle-ci n'économise que quelques
+   instructions par appel, pas par bit.
+4. `i2c_delay` réduit de `bx=2` (~44,4 kHz) à `bx=1` (~88,5 kHz) — marge
+   ramenée de ~125% à ~13% sous le plafond 100 kHz du mode I2C "standard".
+   Réduit le plancher imposé par les ~189 appels à `i2c_delay` par
+   transaction (le facteur dominant restant, une fois la surcharge d'appels
+   éliminée par l'optimisation 2). **Premier candidat à assouplir**
+   (revenir à `bx=2`) si le LCD I2C devient instable sur le matériel réel.
 
 Réutilise `lcd_delay` / `lcd_delay_long` / `lcd_powerup_delay` de
 `lib/lcd.asm` pour les temps d'exécution propres au HD44780 (mêmes
