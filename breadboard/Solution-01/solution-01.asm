@@ -433,16 +433,18 @@ dump_line:
 %ifdef TEST_I2C_DUMP
         ; --- LCD I2C (TEST_I2C_DUMP): dump complet des 16 octets en
         ; hexadecimal, 4 par ligne sur les 4 lignes du LCD 4x20 - voir
-        ; la note pres de %define TEST_I2C_DUMP en haut du fichier ---
+        ; la note pres de %define TEST_I2C_DUMP en haut du fichier.
+        ; ASCII (8 caracteres/groupe de 8 octets) affiche seulement
+        ; sur les lignes 1 et 3 - voir i2c_dump_hex_ascii8_line ---
         push    di
         call    i2c_lcd_line1
-        call    i2c_dump_hex_line
+        call    i2c_dump_hex_ascii8_line       ; hexa bytes[0:4] + ascii bytes[0:8]
         call    i2c_lcd_line2
-        call    i2c_dump_hex_line
+        call    i2c_dump_hex_only_line         ; hexa bytes[4:8] seulement
         call    i2c_lcd_line3
-        call    i2c_dump_hex_line
+        call    i2c_dump_hex_ascii8_line       ; hexa bytes[8:12] + ascii bytes[8:16]
         call    i2c_lcd_line4
-        call    i2c_dump_hex_line
+        call    i2c_dump_hex_only_line         ; hexa bytes[12:16] seulement
         pop     di
 %endif
 
@@ -495,24 +497,58 @@ dump_line:
 
 %ifdef TEST_I2C_DUMP
 ; ============================================================
-; i2c_dump_hex_line (TEST_I2C_DUMP uniquement)
-; Affiche 4 octets en hexadecimal (separes par un espace), un espace,
-; puis les 4 caracteres ASCII correspondants (ou '.' si non imprimable,
-; meme regle que le dump UART - voir plus bas) sur le LCD I2C, a la
-; position DDRAM courante (positionnee par l'appelant - voir
-; dump_line). "XX XX XX XX ASCI" = 11+1+4 = 16 caracteres, dans les
-; 20 colonnes disponibles.
+; i2c_dump_hex_only_line (TEST_I2C_DUMP uniquement)
+; Affiche 4 octets en hexadecimal (separes par un espace), SANS
+; ASCII - utilisee pour les lignes 2 et 4 (voir dump_line;
+; i2c_dump_hex_ascii8_line, pour les lignes 1 et 3, affiche deja
+; l'ASCII de ces 4 octets en plus des siens). "XX XX XX XX" = 11
+; caracteres, dans les 20 colonnes disponibles.
 ; Entree:  ES:DI = 4 octets a afficher.
 ; Sortie:  DI avance de 4.
 ; ============================================================
-i2c_dump_hex_line:
+i2c_dump_hex_only_line:
+        push    ax
+        push    cx
+        mov     cx, 4
+.loop:
+        mov     al, [es:di]
+        call    i2c_lcd_tx_hex_byte
+        cmp     cx, 1
+        je      .last
+        mov     al, ' '
+        call    i2c_lcd_data
+.last:
+        inc     di
+        loop    .loop
+        pop     cx
+        pop     ax
+        ret
+
+; ============================================================
+; i2c_dump_hex_ascii8_line (TEST_I2C_DUMP uniquement)
+; Affiche 4 octets en hexadecimal (separes par un espace), un espace,
+; puis les 8 caracteres ASCII correspondant a CE groupe de 4 octets
+; ET AU SUIVANT (ou '.' si non imprimable, meme regle que le dump
+; UART - voir plus bas) - utilisee pour les lignes 1 et 3 (voir
+; dump_line), le groupe suivant (lignes 2/4) n'affichant alors plus
+; d'ASCII du tout (voir i2c_dump_hex_only_line). "XX XX XX XX ASCIIII"
+; = 11+1+8 = 20 caracteres EXACTEMENT (pleine largeur).
+; Entree:  ES:DI = 4 octets a afficher en hexa - le debut de ce
+;          groupe ET du suivant (8 octets au total pour l'ASCII),
+;          donc AVANT que le groupe suivant soit lu par
+;          i2c_dump_hex_only_line.
+; Sortie:  DI avance de 4 (seul le groupe hexa affiche par CET appel
+;          est "consomme" du point de vue de DI - le suivant reste a
+;          lire par le prochain appel, comme d'habitude).
+; ============================================================
+i2c_dump_hex_ascii8_line:
         push    ax
         push    cx
         push    si
-        mov     si, di          ; SI = copie du debut de bloc, pour relire
-                                 ; les memes 4 octets a la passe ASCII -
-                                 ; DI, lui, doit finir avance de 4 (contrat
-                                 ; de sortie, utilise par dump_line)
+        mov     si, di          ; SI = debut de CE groupe de 4 (pour les 8
+                                 ; octets ASCII: ce groupe + le suivant) -
+                                 ; DI, lui, doit finir avance de 4 seulement
+                                 ; (contrat de sortie, utilise par dump_line)
         mov     cx, 4
 .hex_loop:
         mov     al, [es:di]
@@ -528,7 +564,7 @@ i2c_dump_hex_line:
         mov     al, ' '                 ; separateur entre hexa et ascii
         call    i2c_lcd_data
 
-        mov     cx, 4
+        mov     cx, 8
 .ascii_loop:
         mov     al, [es:si]
         cmp     al, 20h         ; < espace -> non imprimable

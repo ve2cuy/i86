@@ -254,16 +254,24 @@ exigences, peu importe le transport parallèle ou I2C).
 
 Active un affichage supplémentaire, sur le LCD I2C, des 16 octets de
 **chaque ligne** du dump ROM (`dump_line`) — 4 octets par ligne sur
-les 4 lignes du LCD 4×20, en hexadécimal suivis des 4 caractères ASCII
-correspondants (`.` pour les non imprimables, même règle que le dump
-UART) : `"XX XX XX XX ASCI"` = 16 des 20 colonnes — en plus de ce qui
-s'affiche déjà sur le LCD parallèle et l'UART. Sert à mesurer/stresser
-le temps de réponse du LCD I2C sur 257 mises à jour complètes et
-successives.
+les 4 lignes du LCD 4×20 :
+- **Lignes 1 et 3** (`i2c_dump_hex_ascii8_line`) : `"XX XX XX XX "` (ses
+  4 octets, en hexadécimal) puis **8 caractères ASCII** — ceux de ce
+  groupe de 4 octets **et** du suivant (`.` pour les non imprimables,
+  même règle que le dump UART) — soit `"XX XX XX XX ASCIIIII"` = 20
+  des 20 colonnes, pleine largeur.
+- **Lignes 2 et 4** (`i2c_dump_hex_only_line`) : `"XX XX XX XX"`
+  seulement (hexadécimal, sans ASCII — déjà couvert par la ligne
+  précédente).
+
+En plus de ce qui s'affiche déjà sur le LCD parallèle et l'UART. Sert
+à mesurer/stresser le temps de réponse du LCD I2C sur 257 mises à jour
+complètes et successives.
 Aucun impact sur le comportement normal quand la directive reste
-désactivée : le code correspondant (dans `dump_line` et dans la
-procédure `i2c_dump_hex_line`) est entièrement gardé par
-`%ifdef TEST_I2C_DUMP` / `%endif` et n'est simplement pas assemblé.
+désactivée : le code correspondant (dans `dump_line` et dans les
+procédures `i2c_dump_hex_only_line`/`i2c_dump_hex_ascii8_line`) est
+entièrement gardé par `%ifdef TEST_I2C_DUMP` / `%endif` et n'est
+simplement pas assemblé.
 
 **Façon recommandée de l'activer — sans modifier le fichier** : passer
 la définition directement à NASM en ligne de commande, avec le flag `-d` :
