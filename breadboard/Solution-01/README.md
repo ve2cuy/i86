@@ -432,7 +432,7 @@ sur la case sélectionnée) :
 |---|---|
 | Flèches | Déplacent la case sélectionnée dans la grille |
 | Chiffre hexa (`0-9`/`A-F`) | Compose une nouvelle valeur pour la case courante (1 ou 2 chiffres, retour arrière pour corriger) |
-| Entrée | Écrit la valeur composée en RAM (ignorée si aucun chiffre tapé) |
+| Entrée | Écrit la valeur composée en RAM (ignorée si aucun chiffre tapé), puis avance automatiquement à la case suivante (`edit_ram_advance`) |
 | `Q` / `q` | Termine l'édition, retour au menu |
 
 | Option | Action | Détail |

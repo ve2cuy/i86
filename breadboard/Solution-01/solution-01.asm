@@ -667,6 +667,7 @@ edit_ram_action:
         jc      .redraw                  ; Entree sans saisie - rien a ecrire
         mov     dl, bl                   ; DL = valeur a ecrire (survit a l'appel)
         call    edit_ram_write_current
+        call    edit_ram_advance         ; passe a la case suivante (ordre de lecture)
         jmp     .redraw
 
 .quit:
@@ -937,6 +938,40 @@ edit_ram_move_down:
         mov     di, EDIT_ROW_OFF
         cmp     byte [es:di], EDIT_ROWS-1
         jae     .done
+        inc     byte [es:di]
+.done:
+        pop     di
+        pop     es
+        pop     ax
+        ret
+
+; ============================================================
+; edit_ram_advance
+; Deplace le curseur logique a la case SUIVANTE en ordre de lecture
+; (gauche a droite, puis ligne suivante) - appelee apres Entree pour
+; passer automatiquement a l'octet suivant, sans avoir a re-appuyer
+; sur une fleche. Fixe a la derniere case de la grille (pas de retour
+; au debut - meme limite que les fleches, voir Directives.md).
+; ============================================================
+edit_ram_advance:
+        push    ax
+        push    es
+        push    di
+
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_COL_OFF
+        cmp     byte [es:di], EDIT_COLS-1
+        jb      .same_row
+        ; --- fin de ligne: colonne -> 0, tente de passer a la ligne
+        ; suivante (fixe si deja sur la derniere - pas de defilement) ---
+        mov     byte [es:di], 0
+        mov     di, EDIT_ROW_OFF
+        cmp     byte [es:di], EDIT_ROWS-1
+        jae     .done
+        inc     byte [es:di]
+        jmp     .done
+.same_row:
         inc     byte [es:di]
 .done:
         pop     di
