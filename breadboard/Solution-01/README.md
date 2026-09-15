@@ -562,11 +562,24 @@ le LCD[+LCD-I2C si `TEST_I2C_DUMP`]) tous les octets de cette plage
 (`dump_memory_action`) remplace les deux anciennes options fixes
 ("Dump ROM" / "Dump first 4k RAM") : elle fonctionne indifféremment
 pour la ROM (ex. `C000:0000` à `F000:FFFF` pour toute la ROM, 256 Ko),
-la RAM (ex. `0000:0000` à `1000:FFFF` pour toute la RAM, 128 Ko) ou
-n'importe quelle plage intermédiaire, y compris à cheval sur une
-frontière de segment. Si l'adresse de fin est antérieure à celle de
+la RAM (ex. `0000:0000` à `1000:FFFF` pour toute la RAM, 128 Ko),
+**tout l'espace d'adressage matériel en une seule fois** (`0000:0000`
+à `F000:FFFF`, jusqu'à l'adresse physique `FFFFFh` — 20 lignes
+d'adresse, voir le piège `FFFF:FFFx` ci-dessous) ou n'importe quelle
+plage intermédiaire, y compris à cheval sur plusieurs dizaines de
+frontières de segment. Si l'adresse de fin est antérieure à celle de
 départ, la plage est rejetée (message d'erreur UART, rien n'est
 dumpé).
+
+L'arrêt normal compare l'adresse physique **courante** (32 bits) à
+l'adresse physique de fin à chaque ligne, plutôt que de précalculer un
+nombre total de lignes : pour la plage maximale ci-dessus, ce total
+vaudrait exactement 65536, qui ne tient pas dans un mot de 16 bits
+(débordement silencieux). Cas limite géré séparément : si l'avance de
+segment déborde elle-même 16 bits (segment déjà `F000h`-`FFFFh`), la
+plage maximale du matériel vient d'être entièrement couverte — le dump
+s'arrête plutôt que de continuer sur un segment erroné (qui reviendrait
+à `0000h`).
 
 ⚠️ **Piège classique — les 16 derniers octets de la ROM** : ce ne sont
 **PAS** `FFFF:FFF0`-`FFFF:FFFF`. Le 8088 n'a que 20 lignes d'adresse

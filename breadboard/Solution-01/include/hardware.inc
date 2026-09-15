@@ -51,24 +51,26 @@ EDIT_COL_OFF        equ     0FC06h  ; colonne courante du curseur (0-5)
 ; --- adresses saisies par dump_memory_action (solution-01.asm), le
 ; --- temps de calculer les adresses physiques de depart/fin - voir
 ; --- son en-tete ---
-DUMP_START_SEG_OFF  equ     0FC07h  ; segment de depart saisi (mot)
-DUMP_START_OFF_OFF  equ     0FC09h  ; offset de depart saisi (mot)
-DUMP_END_SEG_OFF    equ     0FC0Bh  ; segment de fin saisi (mot)
-DUMP_END_OFF_OFF    equ     0FC0Dh  ; offset de fin saisi (mot)
-DUMP_LINES_LEFT_OFF equ     0FC0Fh  ; lignes de 16 octets restant a
-                                     ; afficher (mot, decompte - voir
-                                     ; dump_memory_action: dump_line
-                                     ; detruit CX, un compteur "loop"
-                                     ; classique n'y survivrait pas)
+DUMP_START_SEG_OFF   equ    0FC07h  ; segment de depart saisi (mot)
+DUMP_START_OFF_OFF   equ    0FC09h  ; offset de depart saisi (mot)
+DUMP_END_SEG_OFF     equ    0FC0Bh  ; segment de fin saisi (mot)
+DUMP_END_OFF_OFF     equ    0FC0Dh  ; offset de fin saisi (mot)
+; --- adresse physique de fin (32 bits), memorisee une fois calculee -
+; --- comparee a l'adresse physique COURANTE a chaque ligne plutot que
+; --- de precalculer un nombre total de lignes (qui pourrait deborder
+; --- 16 bits: exactement 65536 lignes pour la plage maximale de ce
+; --- materiel, 0000:0000 a F000:FFFF - voir dump_memory_action) ---
+DUMP_END_PHYS_LO_OFF equ    0FC0Fh  ; poids faible (mot)
+DUMP_END_PHYS_HI_OFF equ    0FC11h  ; poids fort (mot)
 
 ; --- curseurs logiques de int10h_handler (solution-01.asm), AH=02h/
 ; --- 09h "esprit BIOS" - UN JEU PAR DEVICE (LCD parallele / LCD I2C)
 ; --- depuis l'ajout des macros gotoxy/print (voir
 ; --- include/lcd_macros.inc et l'en-tete de int10h_handler). UART
 ; --- n'a pas de curseur (flux serie, AH=02h y est un no-op). ---
-BIOS_CURSOR_LCD_ROW_OFF    equ 0FC11h  ; LCD parallele: ligne courante (0-3)
-BIOS_CURSOR_LCD_COL_OFF    equ 0FC12h  ; LCD parallele: colonne courante (0-19)
-BIOS_CURSOR_LCDI2C_ROW_OFF equ 0FC13h  ; LCD I2C: ligne courante (0-3)
-BIOS_CURSOR_LCDI2C_COL_OFF equ 0FC14h  ; LCD I2C: colonne courante (0-19)
+BIOS_CURSOR_LCD_ROW_OFF    equ 0FC13h  ; LCD parallele: ligne courante (0-3)
+BIOS_CURSOR_LCD_COL_OFF    equ 0FC14h  ; LCD parallele: colonne courante (0-19)
+BIOS_CURSOR_LCDI2C_ROW_OFF equ 0FC15h  ; LCD I2C: ligne courante (0-3)
+BIOS_CURSOR_LCDI2C_COL_OFF equ 0FC16h  ; LCD I2C: colonne courante (0-19)
 
 %endif ; HARDWARE_INC

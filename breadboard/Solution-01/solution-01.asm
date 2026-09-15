@@ -465,15 +465,28 @@ mem_calc_physical:
 ;
 ; Fonctionne indifferemment pour la ROM (ex: C000:0000 a F000:FFFF
 ; pour toute la ROM, 256 Ko), la RAM (ex: 0000:0000 a 1000:FFFF pour
-; toute la RAM, 128 Ko) ou n'importe quelle plage intermediaire -
-; plus besoin de deux procedures separees.
+; toute la RAM, 128 Ko), TOUT l'espace d'adressage materiel en une
+; seule fois (0000:0000 a F000:FFFF, jusqu'a l'adresse physique
+; FFFFFh - 20 lignes d'adresse, voir le piege FFFF:FFFx dans
+; README.md) ou n'importe quelle plage intermediaire - plus besoin de
+; deux procedures separees.
 ;
 ; La plage peut traverser une frontiere de segment (ex: 0000:FFF0 a
-; 1000:0010): l'offset (DI) est avance de 16 a chaque ligne comme
-; avant; en cas de debordement (DI redevient <= sa valeur d'avant
-; l'ajout), le segment (ES) est avance de 1000h pour rester a la
-; bonne adresse physique (1 paragraphe = 16 octets = 1000h en
-; unites de segment).
+; 1000:0010, ou meme plusieurs dizaines de segments d'affilee):
+; l'offset (DI) est avance de 16 a chaque ligne comme avant; en cas de
+; debordement (DI redevient <= sa valeur d'avant l'ajout), le segment
+; (ES) est avance de 1000h pour rester a la bonne adresse physique
+; (1 paragraphe = 16 octets = 1000h en unites de segment) - SAUF si
+; cet ajout deborde LUI-MEME 16 bits (ES etait deja F000h-FFFFh): la
+; plage maximale de ce materiel vient alors d'etre entierement
+; couverte, le dump s'arrete plutot que de continuer sur un segment
+; errone (qui reviendrait a 0000h).
+;
+; L'arret normal (hors ce cas limite) compare l'adresse physique
+; COURANTE (32 bits) a l'adresse physique de fin a CHAQUE ligne,
+; plutot que de precalculer un nombre total de lignes: pour la plage
+; maximale ci-dessus, ce total vaudrait exactement 65536, qui NE TIENT
+; PAS dans un mot de 16 bits (deborderait silencieusement a 0).
 ;
 ; Validation: si l'adresse de fin (physique) est STRICTEMENT
 ; INFERIEURE a celle de depart, la plage est invalide - un message
@@ -622,6 +635,19 @@ dump_memory_action:
         mov     bx, [es:di]                     ; BX = offset de fin
         call    mem_calc_physical               ; DX:AX = adresse physique de fin
 
+        ; --- memorise end_phys (32 bits) - compare a l'adresse
+        ; physique COURANTE a chaque ligne (voir .line_loop plus bas)
+        ; plutot que de precalculer un nombre total de lignes: pour la
+        ; plage maximale de ce materiel (0000:0000 a F000:FFFF), ce
+        ; total vaudrait exactement 65536, qui NE TIENT PAS dans un
+        ; mot de 16 bits (deborderait a 0) ---
+        mov     bx, VAR_SEG
+        mov     es, bx
+        mov     di, DUMP_END_PHYS_LO_OFF
+        mov     [es:di], ax
+        mov     di, DUMP_END_PHYS_HI_OFF
+        mov     [es:di], dx
+
         pop     cx                              ; CX = start_phys (poids faible)
         pop     bp                              ; BP = start_phys (poids fort)
 
@@ -631,29 +657,6 @@ dump_memory_action:
         cmp     ax, cx
         jb      .invalid_range
 .range_ok:
-        ; --- diff = end_phys - start_phys (32 bits), puis
-        ; --- total_lines = diff/16 + 1 (division par 16 = 4 decalages
-        ; --- a droite du couple DX:AX) ---
-        sub     ax, cx
-        sbb     dx, bp
-        mov     cx, 4
-.shr32:
-        shr     dx, 1
-        rcr     ax, 1
-        loop    .shr32
-        inc     ax                              ; AX = total_lines (DX ignore -
-                                                  ; toujours 0 pour une plage valide
-                                                  ; sur ce materiel, voir en-tete)
-
-        ; --- compteur de lignes restantes: memorise en RAM (VAR_SEG),
-        ; --- PAS dans CX - dump_line detruit CX (voir son en-tete),
-        ; --- un simple "loop" n'y survivrait pas d'une iteration a
-        ; --- l'autre ---
-        mov     bx, VAR_SEG
-        mov     es, bx
-        mov     di, DUMP_LINES_LEFT_OFF
-        mov     [es:di], ax
-
         ; --- ES:DI = adresse de depart (telle que saisie - pas
         ; --- renormalisee - pour que la premiere ligne affichee
         ; --- corresponde exactement a ce qui a ete tape) ---
@@ -691,25 +694,47 @@ dump_memory_action:
         pop     dx                               ; DX = DI D'AVANT l'appel
         cmp     di, dx
         ja      .no_wrap                         ; DI a augmente normalement
-        mov     ax, es                           ; debordement 16 bits: avance le segment
-        add     ax, 1000h                        ; d'un paragraphe (16 octets = 1000h en
-        mov     es, ax                           ; unites de segment)
+        ; --- debordement 16 bits de DI: avance le segment d'un
+        ; --- paragraphe (1000h). SI CET AJOUT DEBORDE AUSSI (CF=1,
+        ; --- ES etait deja F000h-FFFFh), la plage maximale de ce
+        ; --- materiel (jusqu'a l'adresse physique FFFFFh) vient
+        ; --- d'etre entierement couverte: on s'arrete plutot que de
+        ; --- continuer sur un segment errone (revenu a 0000h) ---
+        mov     ax, es
+        add     ax, 1000h
+        jc      .dump_complete
+        mov     es, ax
 .no_wrap:
         inc     bx
 
-        ; --- decompte du nombre de lignes restantes (VAR_SEG) - ES
-        ; --- (segment du dump en cours) est sauvegarde/restaure
-        ; --- autour de ce court aller-retour ---
-        push    es
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     si, DUMP_LINES_LEFT_OFF
-        dec     word [es:si]
-        mov     ax, [es:si]
-        pop     es
-        cmp     ax, 0
-        jne     .line_loop
+        ; --- adresse physique COURANTE (ES:DI, apres cette ligne) -
+        ; --- comparee a end_phys (32 bits, en RAM): continue tant que
+        ; --- current <= end_phys. BX (numero de ligne) sauvegarde
+        ; --- autour de l'appel a mem_calc_physical (qui utilise BX
+        ; --- pour l'offset en entree) ---
+        push    bx
+        mov     ax, es
+        mov     bx, di
+        call    mem_calc_physical               ; DX:AX = adresse physique courante
+        pop     bx
 
+        ; --- BP adresse VAR_SEG directement via SS (= VAR_SEG en
+        ; --- PERMANENCE depuis l'init de la pile, voir start:) - pas
+        ; --- besoin de sauvegarder/restaurer ES (segment du dump) ---
+        push    bp
+        mov     bp, DUMP_END_PHYS_HI_OFF
+        cmp     dx, [bp]
+        ja      .dump_complete_popbp
+        jb      .continue_popbp
+        mov     bp, DUMP_END_PHYS_LO_OFF
+        cmp     ax, [bp]
+        ja      .dump_complete_popbp
+.continue_popbp:
+        pop     bp
+        jmp     .line_loop
+.dump_complete_popbp:
+        pop     bp
+.dump_complete:
         call    msg_dump_fin
         jmp     .done
 
