@@ -619,60 +619,81 @@ s'arrête pas immédiatement.
 
 **Edit RAM** (option 4 du menu principal, ou option 2 du menu Dump —
 même action `edit_ram_action` dans les deux cas) : éditeur de RAM
-interactif. Demande d'abord une adresse de départ (avec retour
-arrière pour corriger) :
+**par plage, avec tampon** (annulation possible) — remplace la version
+à adresse unique du premier jalon. Demande, avec retour arrière
+possible sur chaque saisie :
 
 ```
-Address: 0x0000
+Address: 0x0400
+Size:    0x0400
 ```
 
-... puis affiche une **grille de 24 octets** (6 colonnes × 4 lignes —
-maximise ce qui tient sur le LCD 4×20) à partir de cette adresse, sur
-l'UART **et** le LCD (curseur **matériel** du LCD actif et clignotant
-sur la case sélectionnée) :
+L'adresse de départ **doit être ≥ `0x0400`** (juste après l'IVT, 256
+entrées × 4 octets = 1024 octets — voir [Interruptions logicielles
+type BIOS](#interruptions-logicielles-type-bios-int-10h--int-16h)) :
+une adresse dans l'IVT est **rejetée** (message d'erreur, retour
+immédiat au menu) pour ne jamais pouvoir corrompre les gestionnaires
+d'interruption. La taille doit être entre `1` et `0x0400` (1024)
+octets, et la plage résultante ne doit pas déborder `0xFFFF` (rester
+dans le segment `0000h`) — même rejet sinon.
+
+Contrairement au premier jalon, **rien n'est écrit dans la vraie RAM
+pendant l'édition** : toute la plage est copiée dans un **tampon de
+travail** (1024 octets, `EDIT_BUFFER_OFF`) dès le départ, et l'édition
+ne modifie que ce tampon :
+- **Échap** — **annule** toute l'édition : le tampon est abandonné, la
+  RAM réelle n'est pas touchée.
+- **`Q`/`q`** — **valide** : le tampon est recopié dans la RAM réelle.
+
+La grille affiche 6 colonnes × 4 lignes **visibles** à la fois, mais la
+plage peut en contenir jusqu'à 1024 octets (171 lignes logiques) : les
+flèches **haut/bas font défiler** la fenêtre visible d'une ligne dès
+que le curseur en sortirait — contrairement au premier jalon, limité à
+la grille initialement affichée.
 
 ```
-0000: 00 01 02 03 04 05
-0006: 06 07 08 09 0A 0B
-000C: 0C 0D 0E 0F 10 11
-0012: 12 13 14 15 16 17
+0400: 00 01 02 03 04 05
+0406: 06 07 08 09 0A 0B
+040C: 0C 0D 0E 0F 10 11
+0412: 12 13 14 15 16 17
 ```
 
 | Touche | Effet |
 |---|---|
-| Flèches | Déplacent la case sélectionnée dans la grille |
-| Chiffre hexa (`0-9`/`A-F`) | Compose une nouvelle valeur pour la case courante (1 ou 2 chiffres, retour arrière pour corriger) |
-| Entrée | Écrit la valeur composée en RAM (ignorée si aucun chiffre tapé), puis avance automatiquement à la case suivante (`edit_ram_advance`) |
-| `Q` / `q` | Termine l'édition, retour au menu |
+| Flèches gauche/droite | Déplacent la case sélectionnée **dans sa ligne** (fixées aux bords de colonne) |
+| Flèches haut/bas | Déplacent la case sélectionnée **d'une ligne logique**, avec **défilement** de la fenêtre visible si nécessaire (fixées aux bords de la plage) |
+| Chiffre hexa (`0-9`/`A-F`) | Compose une nouvelle valeur pour la case courante (1 ou 2 chiffres, retour arrière pour corriger) — écrite **dans le tampon** |
+| Entrée | Valide la saisie dans le tampon (ignorée si aucun chiffre tapé), puis avance automatiquement à la case suivante (`edit_ram_advance`) |
+| `Q` / `q` | **Enregistre** le tampon dans la RAM réelle, retour au menu |
+| Échap | **Annule** — la RAM réelle n'est pas modifiée, retour au menu |
 
 | Option | Action | Détail |
 |---|---|---|
-| Test RAM | `test_ram` | Inchangée — teste la RAM 128 Ko, rapporte via UART+LCD |
-| Dump memory | `dump_memory_action` (nouveau, consolidé) | Demande adresse de départ + de fin (`SEGMENT:OFFSET`), dump via `dump_line` — remplace `rom_dump`/`ram_dump_4k` |
+| Test RAM | `test_ram` | Teste la RAM 128 Ko, rapporte via UART+LCD (129 024 octets testés depuis l'agrandissement de la zone réservée pour le tampon d'Edit RAM — voir plus bas) |
+| Dump memory | `dump_memory_action` (consolidé) | Demande adresse de départ + de fin (`SEGMENT:OFFSET`), dump via `dump_line` — remplace `rom_dump`/`ram_dump_4k` |
 | LED Show on PC | `effet1` | Inchangée — chenillard sur le Port C |
-| Edit RAM | `edit_ram_action` (refait) | Grille interactive 24 octets, navigation aux flèches, édition avec retour arrière — voir `lib/ps2.asm` |
+| Edit RAM | `edit_ram_action` (par plage, avec tampon) | Voir ci-dessus |
 | Home menu | — | Retour au menu principal depuis le menu Dump |
 
-État de l'éditeur (adresse de base + position du curseur) conservé
-dans `VAR_SEG` (`EDIT_BASE_OFF`/`EDIT_ROW_OFF`/`EDIT_COL_OFF` — voir
-`include/hardware.inc`), même zone que `PORTA_SHADOW`/les compteurs
-du test RAM. `dump_memory_action` y conserve de façon similaire les
-quatre valeurs saisies (`DUMP_START_SEG_OFF`/`DUMP_START_OFF_OFF`/
-`DUMP_END_SEG_OFF`/`DUMP_END_OFF_OFF`) ainsi que le compteur de lignes
-restantes (`DUMP_LINES_LEFT_OFF`) — ce dernier **doit** vivre en RAM
-plutôt que dans `CX` : `dump_line` détruit `CX` en interne (boucles de
-prévisualisation LCD/hexa/ASCII), donc un simple `loop` autour de
-plusieurs appels n'y survivrait pas.
+État partagé (`VAR_SEG`, voir `include/hardware.inc`) : `edit_ram_action`
+utilise `EDIT_BASE_OFF`/`EDIT_SIZE_OFF` (adresse/taille saisies),
+`EDIT_CURSOR_OFF` (position linéaire du curseur dans le tampon) et
+`EDIT_WINDOW_ROW_OFF` (ligne logique affichée en haut de l'écran), en
+plus du tampon `EDIT_BUFFER_OFF` (1024 octets) lui-même.
+`dump_memory_action` y conserve de façon similaire les quatre valeurs
+saisies (`DUMP_START_SEG_OFF`/`DUMP_START_OFF_OFF`/`DUMP_END_SEG_OFF`/
+`DUMP_END_OFF_OFF`) ainsi que l'adresse physique de fin (32 bits,
+`DUMP_END_PHYS_LO_OFF`/`DUMP_END_PHYS_HI_OFF`), comparée à l'adresse
+physique courante à chaque ligne (voir plus bas, "couvrir plus de
+64 Ko"). Cette zone réservée fait maintenant **2 Ko** (agrandie de 1 Ko
+pour loger le tampon d'Edit RAM), d'où le nombre d'octets testés par
+`test_ram` légèrement réduit.
 
-⚠️ **Limitations connues** (voir Directives.md) : la navigation aux
-flèches d'`Edit RAM` est **limitée à la grille de 24 octets**
-initialement affichée — pas de défilement vers d'autres pages pour ce
-premier jalon (quitter avec `Q` et rouvrir "Edit RAM" avec une autre
-adresse pour éditer ailleurs). La ligne 4 du LCD pendant un dump
-affiche "`Ligne: NNN`" (numéro de ligne, 3 chiffres via `lcd_tx_dec3`)
-sans dénominateur — au-delà de 999 lignes (15 984 octets) cet affichage
-redevient incorrect (cosmétique seulement, le dump UART reste toujours
-exact quelle que soit la taille de la plage).
+⚠️ **Limitation connue** (voir Directives.md) : la ligne 4 du LCD
+pendant un dump affiche "`Ligne: NNN`" (numéro de ligne, 3 chiffres via
+`lcd_tx_dec3`) sans dénominateur — au-delà de 999 lignes (15 984
+octets) cet affichage redevient incorrect (cosmétique seulement, le
+dump UART reste toujours exact quelle que soit la taille de la plage).
 
 ## Outils nécessaires pour produire le `.bin` final
 

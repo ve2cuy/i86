@@ -35,42 +35,59 @@ PIO         EQU    10000011B
 MASQUE_PIO  EQU    10000010B   ;PORT A ET C EN SORTIE, PORT B EN ENTREE (PS/2)
 
 ; --- copie fantome du port A + compteurs de progression du test RAM
-; --- + etat de l'editeur RAM (edit_ram_action, solution-01.asm):
-; --- vivent dans la zone deja reservee a la pile (segment VAR_SEG,
-; --- tout debut du dernier Ko non teste - voir "1 Ko reserve a la
-; --- pile" dans test_ram, solution-01.asm). 7 octets utilises sur
-; --- 1024 reserves. ---
+; --- + etat de l'editeur RAM + tampon d'edition (edit_ram_action,
+; --- solution-01.asm) + etat de dump_memory_action + curseurs
+; --- "esprit BIOS": vivent dans une zone de 2 Ko reservee a la fin du
+; --- segment VAR_SEG (agrandie de 1 a 2 Ko pour loger le tampon
+; --- d'edition de 1024 octets - voir test_ram, solution-01.asm, pour
+; --- le nombre d'octets reellement testes en consequence). ---
 VAR_SEG             equ     1000h
+
+; --- tampon de travail de edit_ram_action (1024 octets max) - toute
+; --- l'edition se fait ICI, jamais directement en RAM reelle: Echap
+; --- abandonne ce tampon (rien n'est ecrit), Q/q le recopie dans la
+; --- RAM reelle (voir edit_ram_load_buffer/edit_ram_commit_buffer).
+; --- Occupe a lui seul la moitie de la zone reservee. ---
+EDIT_BUFFER_OFF     equ     0F800h  ; 1024 octets: 0F800h-0FBFFh
+
 PORTA_SHADOW_OFF    equ     0FC00h
 BLOCK_COUNTER_OFF   equ     0FC01h  ; numero du bloc courant (1-127)
 DEFECT_COUNTER_OFF  equ     0FC02h  ; nombre de blocs ayant eu >=1 defaut
-EDIT_BASE_OFF       equ     0FC03h  ; adresse de base de la grille d'edition (mot)
-EDIT_ROW_OFF        equ     0FC05h  ; ligne courante du curseur (0-3)
-EDIT_COL_OFF        equ     0FC06h  ; colonne courante du curseur (0-5)
+
+; --- etat de edit_ram_action: adresse/taille de la plage saisie, et
+; --- position courante dans le tampon (curseur logique + fenetre
+; --- visible, pour le defilement quand la plage depasse les 4
+; --- lignes du LCD) ---
+EDIT_BASE_OFF       equ     0FC03h  ; adresse de depart de la plage (mot)
+EDIT_SIZE_OFF       equ     0FC05h  ; taille de la plage en octets, 1-400h (mot)
+EDIT_CURSOR_OFF     equ     0FC07h  ; position lineaire du curseur dans le
+                                     ; tampon, 0 a (taille-1) (mot)
+EDIT_WINDOW_ROW_OFF equ     0FC09h  ; ligne LOGIQUE (0-based, pas de deplacement
+                                     ; en colonnes) affichee en haut de l'ecran (mot)
 
 ; --- adresses saisies par dump_memory_action (solution-01.asm), le
 ; --- temps de calculer les adresses physiques de depart/fin - voir
 ; --- son en-tete ---
-DUMP_START_SEG_OFF   equ    0FC07h  ; segment de depart saisi (mot)
-DUMP_START_OFF_OFF   equ    0FC09h  ; offset de depart saisi (mot)
-DUMP_END_SEG_OFF     equ    0FC0Bh  ; segment de fin saisi (mot)
-DUMP_END_OFF_OFF     equ    0FC0Dh  ; offset de fin saisi (mot)
+DUMP_START_SEG_OFF   equ    0FC0Bh  ; segment de depart saisi (mot)
+DUMP_START_OFF_OFF   equ    0FC0Dh  ; offset de depart saisi (mot)
+DUMP_END_SEG_OFF     equ    0FC0Fh  ; segment de fin saisi (mot)
+DUMP_END_OFF_OFF     equ    0FC11h  ; offset de fin saisi (mot)
 ; --- adresse physique de fin (32 bits), memorisee une fois calculee -
 ; --- comparee a l'adresse physique COURANTE a chaque ligne plutot que
 ; --- de precalculer un nombre total de lignes (qui pourrait deborder
 ; --- 16 bits: exactement 65536 lignes pour la plage maximale de ce
 ; --- materiel, 0000:0000 a F000:FFFF - voir dump_memory_action) ---
-DUMP_END_PHYS_LO_OFF equ    0FC0Fh  ; poids faible (mot)
-DUMP_END_PHYS_HI_OFF equ    0FC11h  ; poids fort (mot)
+DUMP_END_PHYS_LO_OFF equ    0FC13h  ; poids faible (mot)
+DUMP_END_PHYS_HI_OFF equ    0FC15h  ; poids fort (mot)
 
 ; --- curseurs logiques de int10h_handler (solution-01.asm), AH=02h/
 ; --- 09h "esprit BIOS" - UN JEU PAR DEVICE (LCD parallele / LCD I2C)
 ; --- depuis l'ajout des macros gotoxy/print (voir
 ; --- include/lcd_macros.inc et l'en-tete de int10h_handler). UART
 ; --- n'a pas de curseur (flux serie, AH=02h y est un no-op). ---
-BIOS_CURSOR_LCD_ROW_OFF    equ 0FC13h  ; LCD parallele: ligne courante (0-3)
-BIOS_CURSOR_LCD_COL_OFF    equ 0FC14h  ; LCD parallele: colonne courante (0-19)
-BIOS_CURSOR_LCDI2C_ROW_OFF equ 0FC15h  ; LCD I2C: ligne courante (0-3)
-BIOS_CURSOR_LCDI2C_COL_OFF equ 0FC16h  ; LCD I2C: colonne courante (0-19)
+BIOS_CURSOR_LCD_ROW_OFF    equ 0FC17h  ; LCD parallele: ligne courante (0-3)
+BIOS_CURSOR_LCD_COL_OFF    equ 0FC18h  ; LCD parallele: colonne courante (0-19)
+BIOS_CURSOR_LCDI2C_ROW_OFF equ 0FC19h  ; LCD I2C: ligne courante (0-3)
+BIOS_CURSOR_LCDI2C_COL_OFF equ 0FC1Ah  ; LCD I2C: colonne courante (0-19)
 
 %endif ; HARDWARE_INC

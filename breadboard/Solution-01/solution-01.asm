@@ -343,11 +343,12 @@ start:
 ; ============================================================
 ; test_ram
 ; Teste la totalite de la RAM statique de 128K (00000h-1FFFFh),
-; par blocs de 64K (2 segments: 0000h et 1000h), moins le
-; dernier Ko du segment 1000h reserve a la pile active ET a la
-; copie fantome du port A (PORTA_SHADOW_OFF = tout debut de cette
-; zone, voir en en-tete).
-; Resultat: 130048 octets testes sur 131072 (127 blocs de 1 Ko).
+; par blocs de 64K (2 segments: 0000h et 1000h), moins les 2 derniers
+; Ko du segment 1000h reserves a la pile active, a la copie fantome
+; du port A, au tampon d'edition de edit_ram_action et aux autres
+; variables partagees (PORTA_SHADOW_OFF = tout debut de cette zone,
+; voir en en-tete).
+; Resultat: 129024 octets testes sur 131072 (126 blocs de 1 Ko).
 ; ============================================================
 test_ram:
         cli                     ; pas d'interruption pendant tout le test
@@ -376,13 +377,14 @@ test_ram:
         mov     cx, 0           ; CX=0 -> 65536 iterations (astuce classique)
         call    test_segment
 
-        ; --- Segment 1000h: physique 10000h-1FFFFh, moins le dernier ---
-        ; --- kilo-octet reserve a la pile -> 64512 octets testes     ---
+        ; --- Segment 1000h: physique 10000h-1FFFFh, moins les 2       ---
+        ; --- derniers Ko reserves a la pile -> 63488 octets testes    ---
         mov     ax, STACK_SEG
         mov     es, ax
         xor     di, di
-        mov     cx, 64512       ; 65536 - 1024 (zone reservee a la pile
-                                 ; ET a PORTA_SHADOW, voir en en-tete)
+        mov     cx, 63488       ; 65536 - 2048 (zone reservee a la pile, au
+                                 ; tampon d'edition et aux autres variables
+                                 ; partagees - voir en en-tete de hardware.inc)
         call    test_segment
 
         ; --- Bilan final ---
@@ -783,33 +785,59 @@ dump_memory_action:
         ret
 
 EDIT_COLS               equ     6               ; octets par ligne de la grille d'edition
-EDIT_ROWS               equ     4               ; lignes de la grille (= 4 lignes du LCD)
+EDIT_ROWS               equ     4               ; lignes VISIBLES a la fois (4 lignes du LCD)
+EDIT_MAX_SIZE           equ     0400h           ; taille maximale d'une plage editable (1024)
+EDIT_MIN_START          equ     0400h           ; adresse de depart minimale (juste apres
+                                                  ; l'IVT, 256*4=1024 octets - voir
+                                                  ; "Interruptions logicielles type BIOS",
+                                                  ; README.md)
 
 ; ============================================================
 ; edit_ram_action
-; Editeur de RAM interactif. Demande d'abord une adresse de depart
-; ("Address: 0x____", 4 chiffres hexa, retour arriere pour corriger -
-; voir ps2_read_hex_editable), puis affiche une grille de
-; EDIT_ROWS x EDIT_COLS (4x6 = 24) octets consecutifs a partir de
-; cette adresse, sur l'UART ET le LCD parallele (curseur MATERIEL du
-; LCD actif et clignotant sur la case courante).
+; Editeur de RAM interactif, PAR PLAGE et AVEC TAMPON (annulation
+; possible) - remplace la version a adresse unique du premier jalon
+; (voir Directives.md).
 ;
-; Controles une fois dans la grille:
-;   Fleches         - deplacent la case courante (limite a cette
-;                     grille de 24 octets pour ce premier jalon -
-;                     pas de defilement vers d'autres pages, voir
-;                     Directives.md)
-;   chiffre hexa     - compose une nouvelle valeur pour la case
-;                     courante (1 ou 2 chiffres, retour arriere pour
-;                     corriger - voir ps2_edit_byte_value)
-;   Entree           - ecrit la valeur composee en RAM (si au moins
-;                     un chiffre a ete tape - sinon ignoree)
-;   Q ou q           - termine l'edition, retourne au menu
+; Demande, avec retour arriere possible sur chaque saisie (voir
+; ps2_read_hex_editable):
+;   1) une adresse de DEPART (4 chiffres hexa) - DOIT etre >=
+;      EDIT_MIN_START (0400h, juste apres l'IVT): une adresse dans
+;      l'IVT est REJETEE (message d'erreur, retour immediat au menu)
+;      pour ne jamais pouvoir corrompre les gestionnaires
+;      d'interruption.
+;   2) une TAILLE en octets (4 chiffres hexa) - DOIT etre entre 1 et
+;      EDIT_MAX_SIZE (400h = 1024) inclusivement, ET la plage
+;      resultante (depart+taille-1) ne doit pas depasser 0FFFFh
+;      (rester dans le segment 0000h) - sinon, meme rejet.
 ;
-; Adresse "reelle" (segment 0000h, meme convention que dump_line) -
-; AUCUNE verification de bornes: on peut ecrire
-; n'importe ou dans les 64 Ko du segment 0000h, y compris hors de la
-; zone testee par test_ram (voir son en-tete).
+; Contrairement au premier jalon, RIEN N'EST ECRIT DANS LA VRAIE RAM
+; PENDANT L'EDITION: tous les octets de la plage sont copies dans un
+; TAMPON de travail (EDIT_BUFFER_OFF, VAR_SEG - voir
+; edit_ram_load_buffer) des le depart, et l'edition ne modifie QUE ce
+; tampon:
+;   Echap - ANNULE toute l'edition: le tampon est abandonne, la RAM
+;           reelle n'est PAS modifiee, retour immediat au menu.
+;   Q/q   - VALIDE: le tampon (taille octets) est recopie dans la RAM
+;           reelle (voir edit_ram_commit_buffer), puis retour au menu.
+;
+; La grille affiche EDIT_ROWS x EDIT_COLS (4x6 = 24) octets a la fois,
+; mais la plage peut en contenir jusqu'a 1024 (soit jusqu'a 171 lignes
+; logiques): les fleches HAUT/BAS FONT DEFILER la fenetre visible d'une
+; ligne des que le curseur en sortirait (voir edit_ram_move_up/down et
+; edit_ram_scroll_to_cursor) - contrairement au premier jalon, limite
+; a la grille initialement affichee.
+;
+;   Fleches G/D  - deplacent la case courante DANS SA LIGNE (fixees
+;                  aux bords de colonne, comme avant).
+;   Fleches H/B  - deplacent la case courante d'UNE LIGNE LOGIQUE
+;                  (fixees aux bords de la plage), avec defilement de
+;                  la fenetre visible si necessaire.
+;   chiffre hexa - compose une nouvelle valeur pour la case courante
+;                  (1 ou 2 chiffres, retour arriere - voir
+;                  ps2_edit_byte_value), ecrite DANS LE TAMPON.
+;   Entree       - valide la saisie dans le tampon (ignoree si aucun
+;                  chiffre tape), avance a la case suivante (voir
+;                  edit_ram_advance).
 ; ============================================================
 edit_ram_action:
         push    ax
@@ -822,32 +850,77 @@ edit_ram_action:
 
         call    lcd_init                ; ecran propre pour la saisie
 
-        ; --- adresse de depart (avec correction) ---
+        ; --- adresse de depart ---
         mov     si, txt_edit_address_prefix
         call    uart_tx_string
         mov     si, txt_edit_address_prefix
-        lcd_show LCD_LINE1              ; curseur LCD reste juste apres "0x"
-                                         ; (positionnement DDRAM auto-incremente)
+        lcd_show LCD_LINE1
         mov     cl, 4
         mov     ah, (LCD_LINE1 & 07Fh) + 11     ; 11 = longueur de "Address: 0x"
-        call    ps2_read_hex_editable   ; BX = adresse saisie (offset)
+        call    ps2_read_hex_editable           ; BX = adresse saisie
 
         mov     al, 13
         call    uart_tx_byte
         mov     al, 10
         call    uart_tx_byte
-        print   txt_edit_help, UART
 
-        ; --- memorise l'adresse de base et remet le curseur logique
-        ; a (0,0) - vivent en RAM, voir hardware.inc ---
+        cmp     bx, EDIT_MIN_START
+        jae     .start_ok
+        print   txt_edit_ivt_reject, UART
+        jmp     .done
+.start_ok:
         mov     ax, VAR_SEG
         mov     es, ax
         mov     di, EDIT_BASE_OFF
+        mov     [es:di], bx                     ; memorise l'adresse de depart
+
+        ; --- taille de la plage (en octets) ---
+        mov     si, txt_edit_size_prefix
+        call    uart_tx_string
+        mov     si, txt_edit_size_prefix
+        lcd_show LCD_LINE2
+        mov     cl, 4
+        mov     ah, (LCD_LINE2 & 07Fh) + 11     ; 11 = longueur de "Size:    0x"
+        call    ps2_read_hex_editable           ; BX = taille saisie
+
+        mov     al, 13
+        call    uart_tx_byte
+        mov     al, 10
+        call    uart_tx_byte
+
+        cmp     bx, 0
+        je      .size_reject
+        cmp     bx, EDIT_MAX_SIZE
+        ja      .size_reject
+
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_BASE_OFF
+        mov     ax, [es:di]                     ; AX = adresse de depart
+        mov     cx, bx                          ; CX = taille
+        dec     cx                              ; CX = taille-1
+        add     ax, cx                          ; AX = dernier octet de la plage
+        jc      .size_reject                    ; deborde 0FFFFh - invalide
+        jmp     .size_ok
+.size_reject:
+        print   txt_edit_size_invalid, UART
+        jmp     .done
+.size_ok:
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_SIZE_OFF
         mov     [es:di], bx
-        mov     di, EDIT_ROW_OFF
-        mov     byte [es:di], 0
-        mov     di, EDIT_COL_OFF
-        mov     byte [es:di], 0
+
+        print   txt_edit_help, UART
+
+        call    edit_ram_load_buffer            ; copie la plage reelle -> tampon
+
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_CURSOR_OFF
+        mov     word [es:di], 0
+        mov     di, EDIT_WINDOW_ROW_OFF
+        mov     word [es:di], 0
 
 .redraw:
         call    edit_ram_draw_grid
@@ -855,10 +928,13 @@ edit_ram_action:
 .wait_key:
         call    ps2_get_char
 
+        cmp     al, 27                          ; Echap: annule (rien recopie)
+        je      .done
+
         cmp     al, 'q'
-        je      .quit
+        je      .commit
         cmp     al, 'Q'
-        je      .quit
+        je      .commit
 
         cmp     al, PS2_KEY_LEFT
         jne     .not_left
@@ -890,11 +966,14 @@ edit_ram_action:
         call    ps2_edit_byte_value      ; AL(entree)=touche deja lue, CF=1 si rien tape
         jc      .redraw                  ; Entree sans saisie - rien a ecrire
         mov     dl, bl                   ; DL = valeur a ecrire (survit a l'appel)
-        call    edit_ram_write_current
+        call    edit_ram_write_current   ; ecrit DANS LE TAMPON
         call    edit_ram_advance         ; passe a la case suivante (ordre de lecture)
         jmp     .redraw
 
-.quit:
+.commit:
+        call    edit_ram_commit_buffer          ; recopie le tampon -> RAM reelle
+
+.done:
         pop     es
         pop     di
         pop     si
@@ -905,11 +984,102 @@ edit_ram_action:
         ret
 
 ; ============================================================
+; edit_ram_load_buffer
+; Copie EDIT_SIZE_OFF octets de la RAM reelle (segment 0000h, a partir
+; de EDIT_BASE_OFF) dans le tampon de travail (EDIT_BUFFER_OFF,
+; VAR_SEG) - appelee une fois au debut de l'edition. BP adresse
+; VAR_SEG directement via SS (= VAR_SEG en PERMANENCE depuis l'init de
+; la pile, voir start:) - [BP] utilise SS par defaut sur le 8086, pas
+; besoin de changer ES pour lire les constantes ni de toucher a DS.
+; ============================================================
+edit_ram_load_buffer:
+        push    ax
+        push    cx
+        push    dx
+        push    si
+        push    bp
+        push    es
+
+        mov     bp, EDIT_BASE_OFF
+        mov     dx, [bp]                ; DX = adresse de depart (RAM reelle)
+        mov     bp, EDIT_SIZE_OFF
+        mov     cx, [bp]                ; CX = taille (nombre d'octets a copier)
+
+        xor     ax, ax
+        mov     es, ax                  ; ES = 0000h (RAM reelle, source)
+        mov     si, dx                  ; SI = adresse source courante
+
+        mov     bp, EDIT_BUFFER_OFF     ; BP = pointeur destination (tampon, via SS)
+.copy_loop:
+        mov     al, [es:si]
+        mov     [bp], al
+        inc     si
+        inc     bp
+        loop    .copy_loop
+
+        pop     es
+        pop     bp
+        pop     si
+        pop     dx
+        pop     cx
+        pop     ax
+        ret
+
+; ============================================================
+; edit_ram_commit_buffer
+; Recopie EDIT_SIZE_OFF octets du tampon de travail (EDIT_BUFFER_OFF)
+; vers la RAM reelle (segment 0000h, a partir de EDIT_BASE_OFF) -
+; appelee UNIQUEMENT sur validation (Q/q), jamais sur Echap. Symetrique
+; de edit_ram_load_buffer (voir son en-tete).
+; ============================================================
+edit_ram_commit_buffer:
+        push    ax
+        push    cx
+        push    dx
+        push    di
+        push    bp
+        push    es
+
+        mov     bp, EDIT_BASE_OFF
+        mov     dx, [bp]                ; DX = adresse de depart (RAM reelle)
+        mov     bp, EDIT_SIZE_OFF
+        mov     cx, [bp]                ; CX = taille
+
+        xor     ax, ax
+        mov     es, ax                  ; ES = 0000h (RAM reelle, destination)
+        mov     di, dx                  ; DI = adresse destination courante
+
+        mov     bp, EDIT_BUFFER_OFF     ; BP = pointeur source (tampon, via SS)
+.copy_loop:
+        mov     al, [bp]
+        mov     [es:di], al
+        inc     di
+        inc     bp
+        loop    .copy_loop
+
+        pop     es
+        pop     bp
+        pop     di
+        pop     dx
+        pop     cx
+        pop     ax
+        ret
+
+; ============================================================
 ; edit_ram_draw_grid
-; (Re)affiche la grille EDIT_ROWS x EDIT_COLS a partir de
-; EDIT_BASE_OFF (VAR_SEG), sur l'UART et le LCD parallele - puis
-; positionne le curseur materiel du LCD (actif, clignotant) sur la
-; cellule EDIT_ROW_OFF/EDIT_COL_OFF.
+; (Re)affiche les EDIT_ROWS (4) lignes VISIBLES a partir de
+; EDIT_WINDOW_ROW_OFF (ligne logique du haut), en lisant les valeurs
+; dans le TAMPON (EDIT_BUFFER_OFF) - PAS la RAM reelle. L'adresse
+; affichee au debut de chaque ligne reste la vraie adresse RAM
+; (EDIT_BASE_OFF + decalage), pour que l'utilisateur s'y retrouve. Les
+; lignes au-dela de la taille de la plage restent vides. Termine en
+; positionnant le curseur materiel du LCD (edit_ram_place_cursor).
+;
+; IMPORTANT: EDIT_SIZE_OFF et EDIT_WINDOW_ROW_OFF sont RELUS a chaque
+; ligne (pas gardes dans BX/CX d'une iteration a l'autre): un bug a
+; ete trouve et corrige AVANT deploiement ou BX (fenetre) etait
+; ecrase par le nombre de colonnes valides de la ligne precedente,
+; corrompant le calcul de la ligne suivante.
 ; ============================================================
 edit_ram_draw_grid:
         push    ax
@@ -918,51 +1088,81 @@ edit_ram_draw_grid:
         push    dx
         push    si
         push    di
+        push    bp
         push    es
 
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     di, EDIT_BASE_OFF
-        mov     bx, [es:di]      ; BX = adresse de base (offset RAM, segment 0000h)
+        call    lcd_init
 
-        call    lcd_init         ; ecran propre a chaque redessin (simple/robuste)
-
-        xor     ax, ax
-        mov     es, ax           ; ES = 0000h (segment RAM edite)
-        mov     di, bx           ; DI = adresse courante, avance octet par octet
-
-        mov     dh, 0            ; DH = ligne courante (0-3)
+        xor     si, si                  ; SI = ligne VISIBLE courante (0-3)
 .row_loop:
-        cmp     dh, 0
+        mov     bp, EDIT_WINDOW_ROW_OFF
+        mov     ax, [bp]                ; AX = ligne logique du haut de la fenetre
+        add     ax, si                  ; AX = ligne logique de CETTE ligne visible
+        mov     dx, 6
+        mul     dx                      ; AX = ligne logique * 6 (tient dans AX,
+                                          ; max 170*6=1020)
+        mov     di, ax                  ; DI = decalage (octets) du 1er octet de
+                                          ; cette ligne dans la plage/le tampon
+
+        mov     bp, EDIT_SIZE_OFF
+        mov     cx, [bp]                ; CX = taille totale (relue a chaque ligne)
+        cmp     di, cx
+        jae     .row_blank              ; au-dela de la plage - ligne vide
+
+        ; --- selectionne la ligne LCD (0-3 -> LCD_LINE1-4) ---
+        cmp     si, 0
         jne     .row_not0
         lcd_goto LCD_LINE1
         jmp     .row_go
 .row_not0:
-        cmp     dh, 1
+        cmp     si, 1
         jne     .row_not1
         lcd_goto LCD_LINE2
         jmp     .row_go
 .row_not1:
-        cmp     dh, 2
+        cmp     si, 2
         jne     .row_not2
         lcd_goto LCD_LINE3
         jmp     .row_go
 .row_not2:
         lcd_goto LCD_LINE4
 .row_go:
-        ; --- UART: adresse reelle de debut de cette ligne ---
-        mov     ax, di
+        ; --- adresse REELLE de cette ligne (EDIT_BASE_OFF + DI) ---
+        mov     bp, EDIT_BASE_OFF
+        mov     ax, [bp]
+        add     ax, di                  ; AX = adresse reelle de cette ligne
+        mov     dx, ax                  ; DX = copie (survit aux impressions)
+        call    lcd_tx_hex_word         ; affiche sur le LCD (detruit AX)
+        mov     al, ':'
+        call    lcd_data
+        mov     al, ' '
+        call    lcd_data
+        mov     ax, dx                  ; restaure l'adresse pour l'UART
         call    uart_tx_hex_word
         mov     al, ':'
         call    uart_tx_byte
         mov     al, ' '
         call    uart_tx_byte
 
-        mov     dl, 0            ; DL = colonne courante (0-5)
+        ; --- nombre de colonnes valides pour cette ligne (6, sauf la
+        ; derniere ligne logique si la taille n'est pas multiple de 6) ---
+        mov     ax, cx
+        sub     ax, di                  ; AX = octets restants a partir d'ici
+        cmp     ax, EDIT_COLS
+        jbe     .cols_ok
+        mov     ax, EDIT_COLS
+.cols_ok:
+        mov     bl, al                  ; BL = nombre de colonnes valides (1-6)
+
+        mov     bp, EDIT_BUFFER_OFF
+        add     bp, di                  ; BP = pointeur tampon, debut de cette ligne
+        xor     dh, dh                  ; DH = colonne courante (0-5)
 .col_loop:
-        mov     al, [es:di]
-        mov     ah, al           ; AH = copie de l'octet - survit a lcd_tx_hex_byte
-                                  ; (qui detruit AL, mais jamais AH - voir def_tx_hex_*)
+        cmp     dh, bl
+        jae     .col_pad
+        mov     al, [bp]
+        mov     ah, al                  ; AH = copie (survit a lcd_tx_hex_byte -
+                                          ; jamais touche, voir def_tx_hex_*)
         call    lcd_tx_hex_byte
         mov     al, ah
         call    uart_tx_hex_byte
@@ -970,9 +1170,21 @@ edit_ram_draw_grid:
         call    lcd_data
         mov     al, ' '
         call    uart_tx_byte
-        inc     di
-        inc     dl
-        cmp     dl, EDIT_COLS
+        inc     bp
+        jmp     .col_next
+.col_pad:
+        ; --- au-dela des octets valides de cette derniere ligne
+        ; partielle: espaces sur le LCD seulement (garde la grille
+        ; alignee) - rien sur l'UART ---
+        mov     al, ' '
+        call    lcd_data
+        mov     al, ' '
+        call    lcd_data
+        mov     al, ' '
+        call    lcd_data
+.col_next:
+        inc     dh
+        cmp     dh, EDIT_COLS
         jb      .col_loop
 
         mov     al, 13
@@ -980,13 +1192,15 @@ edit_ram_draw_grid:
         mov     al, 10
         call    uart_tx_byte
 
-        inc     dh
-        cmp     dh, EDIT_ROWS
+.row_blank:
+        inc     si
+        cmp     si, EDIT_ROWS
         jb      .row_loop
 
         call    edit_ram_place_cursor
 
         pop     es
+        pop     bp
         pop     di
         pop     si
         pop     dx
@@ -998,27 +1212,31 @@ edit_ram_draw_grid:
 ; ============================================================
 ; edit_ram_cell_ddram
 ; Calcule l'adresse DDRAM (SANS le bit de commande) de la case
-; courante (EDIT_ROW_OFF/EDIT_COL_OFF) - "XX " = 3 caracteres par
-; cellule sur le LCD.
+; COURANTE (EDIT_CURSOR_OFF, ramenee a sa position VISIBLE via
+; EDIT_WINDOW_ROW_OFF) - "XX " = 3 caracteres par cellule sur le LCD.
 ; Sortie: AH = adresse DDRAM (0-127).
 ; ============================================================
 edit_ram_cell_ddram:
         push    bx
         push    cx
-        push    es
-        push    di
+        push    dx
+        push    bp
 
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     di, EDIT_ROW_OFF
-        mov     bh, [es:di]      ; BH = ligne (0-3)
-        mov     di, EDIT_COL_OFF
-        mov     bl, [es:di]      ; BL = colonne (0-5)
+        mov     bp, EDIT_CURSOR_OFF
+        mov     ax, [bp]                ; AX = position lineaire du curseur
+        mov     cx, 6
+        xor     dx, dx
+        div     cx                      ; AX = ligne logique, DX = colonne (0-5)
+        mov     bl, dl                  ; BL = colonne
+
+        mov     bp, EDIT_WINDOW_ROW_OFF
+        sub     ax, [bp]                ; AX = ligne VISIBLE (logique - fenetre)
+        mov     bh, al                  ; BH = ligne visible (0-3)
 
         mov     al, bl
         mov     cl, 3
-        mul     cl               ; AX = colonne*3
-        mov     cl, al           ; CL = decalage colonne (0,3,...,15)
+        mul     cl                      ; AX = colonne*3
+        mov     cl, al                  ; CL = decalage colonne (0,3,...,15)
 
         cmp     bh, 0
         je      .r0
@@ -1035,17 +1253,17 @@ edit_ram_cell_ddram:
 .r2:    mov     al, LCD_LINE3 & 07Fh
 .go:
         add     al, cl
-        mov     ah, al           ; AH = adresse DDRAM (sortie)
+        mov     ah, al                  ; AH = adresse DDRAM (sortie)
 
-        pop     di
-        pop     es
+        pop     bp
+        pop     dx
         pop     cx
         pop     bx
         ret
 
 ; ============================================================
 ; edit_ram_place_cursor
-; Positionne le curseur materiel du LCD (active, clignotant) sur la
+; Positionne le curseur materiel du LCD (actif, clignotant) sur la
 ; cellule courante (voir edit_ram_cell_ddram).
 ; ============================================================
 edit_ram_place_cursor:
@@ -1061,145 +1279,228 @@ edit_ram_place_cursor:
 
 ; ============================================================
 ; edit_ram_write_current
-; Ecrit DL en RAM (segment 0000h) a l'adresse EDIT_BASE_OFF +
-; EDIT_ROW_OFF*EDIT_COLS + EDIT_COL_OFF.
+; Ecrit DL DANS LE TAMPON (EDIT_BUFFER_OFF + EDIT_CURSOR_OFF) - jamais
+; directement en RAM reelle (voir edit_ram_action, edit_ram_commit_buffer).
 ; Entree: DL = valeur a ecrire.
 ; ============================================================
 edit_ram_write_current:
         push    ax
+        push    bp
+
+        mov     bp, EDIT_CURSOR_OFF
+        mov     ax, [bp]                ; AX = position lineaire du curseur
+        mov     bp, EDIT_BUFFER_OFF
+        add     bp, ax                  ; BP = pointeur tampon pour cette case
+        mov     [bp], dl
+
+        pop     bp
+        pop     ax
+        ret
+
+; ============================================================
+; edit_ram_scroll_to_cursor
+; Ajuste EDIT_WINDOW_ROW_OFF pour que la ligne logique du curseur
+; (EDIT_CURSOR_OFF) reste visible (entre la fenetre et fenetre+3) -
+; fait defiler d'exactement ce qu'il faut, dans un sens ou l'autre.
+; Appelee apres tout deplacement du curseur qui change de ligne
+; logique (move_up/move_down/advance).
+; ============================================================
+edit_ram_scroll_to_cursor:
+        push    ax
+        push    cx
+        push    dx
+        push    bp
+
+        mov     bp, EDIT_CURSOR_OFF
+        mov     ax, [bp]
+        xor     dx, dx
+        mov     cx, 6
+        div     cx                      ; AX = ligne logique du curseur
+
+        mov     bp, EDIT_WINDOW_ROW_OFF
+        cmp     ax, [bp]
+        jae     .check_bottom
+        mov     [bp], ax                ; au-dessus de la fenetre - remonte
+        jmp     .done
+.check_bottom:
+        mov     cx, [bp]
+        add     cx, EDIT_ROWS - 1       ; CX = derniere ligne visible actuellement
+        cmp     ax, cx
+        jbe     .done                   ; toujours visible
+        sub     ax, EDIT_ROWS
+        inc     ax                      ; nouvelle fenetre = ligne - (EDIT_ROWS-1)
+        mov     [bp], ax
+.done:
+        pop     bp
+        pop     dx
+        pop     cx
+        pop     ax
+        ret
+
+; ============================================================
+; edit_ram_move_left / _right
+; Deplacent le curseur logique (EDIT_CURSOR_OFF) DANS SA LIGNE - fixe
+; aux bords de colonne (pas de saut a la ligne suivante/precedente).
+; ============================================================
+edit_ram_move_left:
+        push    ax
+        push    cx
+        push    dx
+        push    bp
+
+        mov     bp, EDIT_CURSOR_OFF
+        mov     ax, [bp]
+        xor     dx, dx
+        mov     cx, 6
+        div     cx                      ; DX = colonne actuelle (0-5)
+        cmp     dx, 0
+        je      .done
+        dec     word [bp]
+.done:
+        pop     bp
+        pop     dx
+        pop     cx
+        pop     ax
+        ret
+
+edit_ram_move_right:
+        push    ax
         push    bx
         push    cx
-        push    di
-        push    es
+        push    dx
+        push    bp
 
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     di, EDIT_BASE_OFF
-        mov     bx, [es:di]      ; BX = adresse de base
-        mov     di, EDIT_ROW_OFF
-        mov     al, [es:di]      ; AL = ligne (0-3)
-        mov     cl, EDIT_COLS
-        mul     cl               ; AX = ligne*EDIT_COLS
-        add     bx, ax           ; BX += ligne*EDIT_COLS
-        mov     di, EDIT_COL_OFF
-        mov     al, [es:di]      ; AL = colonne (0-5)
-        xor     ah, ah
-        add     bx, ax           ; BX += colonne -> BX = adresse RAM cible
+        mov     bp, EDIT_CURSOR_OFF
+        mov     ax, [bp]
+        mov     bx, ax                  ; BX = curseur actuel (preserve - AX va
+                                          ; etre ecrase par la division)
+        xor     dx, dx
+        mov     cx, 6
+        div     cx                      ; DX = colonne actuelle (0-5)
+        cmp     dx, EDIT_COLS-1
+        jae     .done                   ; deja en derniere colonne
 
-        xor     ax, ax
-        mov     es, ax           ; ES = 0000h
-        mov     di, bx
-        mov     [es:di], dl
+        inc     bx                      ; BX = candidat
+        mov     bp, EDIT_SIZE_OFF
+        cmp     bx, [bp]
+        jae     .done                   ; deborderait la plage - ne bouge pas
 
-        pop     es
-        pop     di
+        mov     bp, EDIT_CURSOR_OFF
+        mov     [bp], bx
+.done:
+        pop     bp
+        pop     dx
         pop     cx
         pop     bx
         pop     ax
         ret
 
 ; ============================================================
-; edit_ram_move_left / _right / _up / _down
-; Deplace le curseur logique (EDIT_ROW_OFF/EDIT_COL_OFF, VAR_SEG)
-; dans la grille - fixe aux bords (pas de defilement au-dela de la
-; grille initialement affichee pour ce premier jalon - voir
-; Directives.md).
+; edit_ram_move_up / _down
+; Deplacent le curseur logique (EDIT_CURSOR_OFF) d'UNE LIGNE LOGIQUE -
+; fixes aux bords de la plage (premiere/derniere ligne). Font defiler
+; la fenetre visible au besoin (edit_ram_scroll_to_cursor) - c'est ce
+; qui permet a la grille de couvrir toute la plage (jusqu'a 1024
+; octets = 171 lignes), pas seulement les 4 premieres lignes visibles.
 ; ============================================================
-edit_ram_move_left:
-        push    ax
-        push    es
-        push    di
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     di, EDIT_COL_OFF
-        cmp     byte [es:di], 0
-        je      .done
-        dec     byte [es:di]
-.done:
-        pop     di
-        pop     es
-        pop     ax
-        ret
-
-edit_ram_move_right:
-        push    ax
-        push    es
-        push    di
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     di, EDIT_COL_OFF
-        cmp     byte [es:di], EDIT_COLS-1
-        jae     .done
-        inc     byte [es:di]
-.done:
-        pop     di
-        pop     es
-        pop     ax
-        ret
-
 edit_ram_move_up:
         push    ax
-        push    es
-        push    di
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     di, EDIT_ROW_OFF
-        cmp     byte [es:di], 0
-        je      .done
-        dec     byte [es:di]
+        push    bp
+
+        mov     bp, EDIT_CURSOR_OFF
+        mov     ax, [bp]
+        cmp     ax, EDIT_COLS
+        jb      .done                   ; deja sur la premiere ligne logique
+        sub     ax, EDIT_COLS
+        mov     [bp], ax
+        call    edit_ram_scroll_to_cursor
 .done:
-        pop     di
-        pop     es
+        pop     bp
         pop     ax
         ret
 
 edit_ram_move_down:
         push    ax
-        push    es
-        push    di
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     di, EDIT_ROW_OFF
-        cmp     byte [es:di], EDIT_ROWS-1
-        jae     .done
-        inc     byte [es:di]
+        push    bx
+        push    cx
+        push    dx
+        push    bp
+
+        mov     bp, EDIT_CURSOR_OFF
+        mov     bx, [bp]                ; BX = curseur actuel (preserve)
+
+        ; --- une ligne SUIVANTE existe-t-elle seulement (meme
+        ; partielle)? Sans cette verification, un "+6" qui deborde la
+        ; plage retomberait sur le dernier octet valide MEME s'il est
+        ; sur LA MEME ligne logique (aucune ligne en dessous) - bug
+        ; trouve et corrige AVANT deploiement par trace manuelle (voir
+        ; Directives.md): taille=4 (une seule ligne partielle) faisait
+        ; sauter du debut a la fin de CETTE ligne au lieu de ne rien
+        ; faire. ---
+        mov     ax, bx
+        xor     dx, dx
+        mov     cx, 6
+        div     cx                      ; AX = ligne logique courante (DX jete)
+        inc     ax                      ; AX = ligne logique SUIVANTE
+        mov     cx, 6
+        mul     cx                      ; AX = 1er octet de cette ligne suivante
+                                          ; (DX ecrase a 0 - le produit tient
+                                          ; dans AX, max 171*6=1026)
+
+        mov     bp, EDIT_SIZE_OFF
+        mov     cx, [bp]                ; CX = taille totale
+        cmp     ax, cx
+        jae     .done                   ; aucune ligne suivante - fixe (pas de
+                                          ; deplacement)
+
+        ; --- il y a une ligne suivante: nouvelle position = curseur+6,
+        ; ou le dernier octet valide si cette ligne est partielle et
+        ; que la colonne courante n'y existe pas ---
+        mov     ax, bx
+        add     ax, EDIT_COLS
+        cmp     ax, cx
+        jb      .have_candidate
+        mov     ax, cx
+        dec     ax                      ; AX = dernier octet valide (taille-1)
+.have_candidate:
+        cmp     ax, bx
+        je      .done                   ; aucun changement reel
+
+        mov     bp, EDIT_CURSOR_OFF
+        mov     [bp], ax
+        call    edit_ram_scroll_to_cursor
 .done:
-        pop     di
-        pop     es
+        pop     bp
+        pop     dx
+        pop     cx
+        pop     bx
         pop     ax
         ret
 
 ; ============================================================
 ; edit_ram_advance
-; Deplace le curseur logique a la case SUIVANTE en ordre de lecture
-; (gauche a droite, puis ligne suivante) - appelee apres Entree pour
-; passer automatiquement a l'octet suivant, sans avoir a re-appuyer
-; sur une fleche. Fixe a la derniere case de la grille (pas de retour
-; au debut - meme limite que les fleches, voir Directives.md).
+; Deplace le curseur logique (EDIT_CURSOR_OFF) a la case SUIVANTE en
+; ordre de lecture (gauche a droite, puis ligne suivante) - appelee
+; apres Entree pour passer automatiquement a l'octet suivant. Fixe a
+; la derniere case de la plage (pas de retour au debut). Fait defiler
+; la fenetre visible au besoin.
 ; ============================================================
 edit_ram_advance:
         push    ax
-        push    es
-        push    di
+        push    bp
 
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     di, EDIT_COL_OFF
-        cmp     byte [es:di], EDIT_COLS-1
-        jb      .same_row
-        ; --- fin de ligne: colonne -> 0, tente de passer a la ligne
-        ; suivante (fixe si deja sur la derniere - pas de defilement) ---
-        mov     byte [es:di], 0
-        mov     di, EDIT_ROW_OFF
-        cmp     byte [es:di], EDIT_ROWS-1
-        jae     .done
-        inc     byte [es:di]
-        jmp     .done
-.same_row:
-        inc     byte [es:di]
+        mov     bp, EDIT_CURSOR_OFF
+        mov     ax, [bp]
+        inc     ax
+        mov     bp, EDIT_SIZE_OFF
+        cmp     ax, [bp]
+        jae     .done                   ; deja sur la derniere case - ne bouge pas
+
+        mov     bp, EDIT_CURSOR_OFF
+        mov     [bp], ax
+        call    edit_ram_scroll_to_cursor
 .done:
-        pop     di
-        pop     es
+        pop     bp
         pop     ax
         ret
 
@@ -2186,9 +2487,9 @@ txt_lu:                 db      '  lu=',0
 txt_defaut_detail:      db      '  >> DEFAUT memoire @ ',0
 
 txt_banniere1:          db      27,'[0m','=== Test RAM 128K (VE2CUY, rapport UART 9600 8N1, PA7) ===',27,'[0m',13,10,0
-txt_banniere2:          db      'Plan: seg 0000h (00000h-0FFFFh, 64 blocs) + seg 1000h (10000h-1FBFFh, 63 blocs)',13,10,'1 Ko reserve a la pile + copie fantome PA7: 1FC00h-1FFFFh (non teste)',13,10,13,10,0
+txt_banniere2:          db      'Plan: seg 0000h (00000h-0FFFFh, 64 blocs) + seg 1000h (10000h-1F7FFh, 62 blocs)',13,10,'2 Ko reserves a la pile + tampon Edit RAM + copie fantome PA7: 1F800h-1FFFFh (non testes)',13,10,13,10,0
 
-txt_ram_ok:             db      27,'[32m','*** RAM OK - 130048 octets testes (127 blocs de 1 Ko), aucune erreur ***',27,'[0m',13,10,13,10,0
+txt_ram_ok:             db      27,'[32m','*** RAM OK - 129024 octets testes (126 blocs de 1 Ko), aucune erreur ***',27,'[0m',13,10,13,10,0
 txt_ram_defaut:         db      27,'[31m','*** RAM DEFECTUEUSE - voir le detail des defauts ci-dessus ***',27,'[0m',13,10,13,10,0
 
 ; ---- bandeau de dump_memory_action: "=== Dump memoire: SSSS:OOOO a
@@ -2227,7 +2528,11 @@ txt_menu_dump:          db      27,'[36m','--- Menu Dump memory ---',27,'[0m',13
 
 ; ---- invite "Edit RAM" (voir edit_ram_action) ----
 txt_edit_address_prefix: db     'Address: 0x', 0
-txt_edit_help:           db     27,'[36m','Fleches: deplacer | chiffre hexa: editer | Entree: enregistrer | Q: quitter',27,'[0m',13,10,13,10,0
+txt_edit_size_prefix:   db      'Size:    0x', 0
+txt_edit_help:           db     27,'[36m','Fleches G/D: colonne | Fleches H/B: ligne (defilement) | chiffre hexa: editer | Entree: valider la case | Q: enregistrer tout | Echap: annuler tout',27,'[0m',13,10,13,10,0
+
+txt_edit_ivt_reject:    db      27,'[31m',"*** Adresse dans l'IVT (< 0x0400) - edition annulee ***",27,'[0m',13,10,13,10,0
+txt_edit_size_invalid:  db      27,'[31m','*** Taille invalide (1-1024 octets, dans les limites du segment) - edition annulee ***',27,'[0m',13,10,13,10,0
 
 ; ---- invites "Dump memory" (voir dump_memory_action) - "End:   0x"
 ; ---- a la meme longueur (9) que "Start: 0x" pour que les chiffres
@@ -2286,10 +2591,10 @@ lcd_text lcd_txt_dump_pad, '', 11
 lcd_text lcd_txt_etat_ok, 'Etat: OK', 20
 lcd_text lcd_txt_etat_defaut, 'Etat: DEFAUT', 20
 
-; ---- ligne 4 de l'etape 2: "Bloc:" + dec3 + "/127 Def:" + dec3 =
+; ---- ligne 4 de l'etape 2: "Bloc:" + dec3 + "/126 Def:" + dec3 =
 ; ---- 5+3+9+3 = 20 caracteres EXACTEMENT (pas de padding requis) ----
 lcd_txt_bloc_prefix:    db      'Bloc:', 0
-lcd_txt_bloc_mid:       db      '/127 Def:', 0
+lcd_txt_bloc_mid:       db      '/126 Def:', 0
 
 ; ---- ligne 3 de l'etape 1 (effet1): "Passe: " + dec3 + "/16" +
 ; ---- 7 espaces = 7+3+10 = 20 caracteres ----
