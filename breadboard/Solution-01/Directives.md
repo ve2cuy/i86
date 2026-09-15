@@ -87,3 +87,4 @@ Suite à discussion avec Claude Code (session du 14 septembre 2026), voici les t
   - delay_ms (3*SECONDE) -> delay_ms (1*SECONDE) pour l'écran de démarrage du LCD parallèle.
   - Ancien label i2c_txt_hello retiré (plus référencé nulle part - vérifié par grep avant suppression).
   - Vérifié: make all/check/check-modules + build TEST_PS2 + build TEST_I2C_DUMP tous validés. Pas encore testé sur le matériel réel.
+* Confirmé sur le matériel réel: bonne disposition sur le LCD I2C, tout est parfait et fonctionnel (version app + paramètres UART sur les 4 lignes, splash à 1 seconde).
