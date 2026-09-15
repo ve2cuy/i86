@@ -167,10 +167,15 @@ ps2_read_byte:
 ; ps2_keymap / ps2_scancode_to_char
 ; Table (scan code Set 2, caractere ASCII) pour les touches utiles
 ; au menu/a la saisie hexadecimale: chiffres 0-9, lettres A-F (pour
-; les valeurs hexa), Entree (13), Retour arriere (8), Echap (27).
-; Terminee par 0,0 (aucun scan code valide n'est 0). Les touches non
-; listees ici (fleches, F1-F12, pave numerique, etc.) sont
-; simplement ignorees par ps2_get_char.
+; les valeurs hexa), Q (quitter l'editeur RAM), Entree (13), Retour
+; arriere (8), Echap (27). Terminee par 0,0 (aucun scan code valide
+; n'est 0). Les touches non listees ici (fleches - voir
+; ps2_ext_keymap -, F1-F12, pave numerique, autres lettres, etc.)
+; sont simplement ignorees par ps2_get_char.
+;
+; Majuscule uniquement (pas de distinction Maj/minuscule: l'etat des
+; touches Shift n'est pas suivi) - edit_ram_action verifie donc 'Q'
+; ET 'q' par prudence, mais seul 'Q' peut effectivement etre recu.
 ; ============================================================
 ps2_keymap:
         db      016h, '1'
@@ -189,6 +194,7 @@ ps2_keymap:
         db      023h, 'D'
         db      024h, 'E'
         db      02Bh, 'F'
+        db      015h, 'Q'       ; quitte l'editeur RAM (edit_ram_action)
         db      05Ah, 13        ; Entree
         db      066h, 8         ; Retour arriere
         db      076h, 27        ; Echap
