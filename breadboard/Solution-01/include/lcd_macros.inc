@@ -67,4 +67,62 @@ LCD_LINE4       equ     11010100b       ; Set DDRAM Address = 80h | 54h
         call    i2c_lcd_print
 %endmacro
 
+; --- Constantes de "device" pour gotoxy/print (INT 10h - voir
+; --- int10h_handler dans solution-01.asm) - memes valeurs que BH
+; --- pour AH=02h/09h. ---
+LCD     equ     1       ; LCD parallele
+LCDI2C  equ     2       ; LCD I2C (PCF8574 0x27)
+UART    equ     3       ; UART logiciel (pas de curseur - gotoxy y est un no-op)
+
+; --------------------------------------------------------------
+; gotoxy / print
+; Remplacent lcd_goto+lcd_show/i2c_lcd_goto+i2c_lcd_show ET les
+; paires "mov si,texte / call uart_tx_string" pour un affichage
+; passant PAR INT 10h (int10h_handler) plutot que par un appel direct
+; a lcd_print/i2c_lcd_print/uart_tx_string - voir la section
+; "Interruptions logicielles type BIOS" du README.md.
+;
+;   gotoxy ligne, colonne, device   ; positionne le curseur logique
+;                                    ; de ce device (AH=02h) - no-op
+;                                    ; pour UART (pas de curseur)
+;   print  texte, device            ; affiche DS:texte (termine par
+;                                    ; 0) a partir de la position
+;                                    ; courante de ce device (AH=09h,
+;                                    ; caractere par caractere pour
+;                                    ; LCD/LCDI2C - voir
+;                                    ; int10h_print_string)
+;
+; Usage (remplace lcd_show LCD_LINE1 / SI deja charge):
+;   gotoxy 0, 0, LCD
+;   print  lcd_txt_splash_l1, LCD
+;
+; N'affectent aucun registre de l'appelant (int10h_handler et
+; int10h_print_string preservent tout - voir leurs en-tetes).
+; --------------------------------------------------------------
+%macro gotoxy 3
+        push    ax
+        push    bx
+        push    dx
+        mov     dh, %1
+        mov     dl, %2
+        mov     bh, %3
+        mov     ah, 02h
+        int     10h
+        pop     dx
+        pop     bx
+        pop     ax
+%endmacro
+
+%macro print 2
+        push    ax
+        push    bx
+        push    si
+        mov     si, %1
+        mov     bh, %2
+        call    int10h_print_string
+        pop     si
+        pop     bx
+        pop     ax
+%endmacro
+
 %endif ; LCD_MACROS_INC

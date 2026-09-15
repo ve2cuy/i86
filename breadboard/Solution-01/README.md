@@ -141,7 +141,8 @@ Solution-01/
 │   │                      des variables partagées)
 │   ├── delay.inc          Macro `delay_ms` (voir lib/utils.asm)
 │   └── lcd_macros.inc     Macros `lcd_goto`/`lcd_show`/`i2c_lcd_goto`/
-│                          `i2c_lcd_show` (voir plus bas)
+│                          `i2c_lcd_show` + `gotoxy`/`print` (INT 10h -
+│                          voir plus bas)
 └── lib/
     ├── common.asm         porta_write (accès partagé LCD/UART/LCD-I2C
     │                      au Port A) + hex_table
@@ -439,8 +440,8 @@ suffirait que `CS` soit différent au moment de `setup_bios_interrupts`.
 
 | `AH` | Fonction | Registres |
 |---|---|---|
-| `02h` | Positionne le curseur **logique** (persiste en RAM, partagé entre les 2 afficheurs) | `DH`=ligne (0-3), `DL`=colonne (0-19) |
-| `09h` | Écrit `AL` au curseur logique courant, **`CX` fois de suite** (remplit `CX` cellules consécutives — même convention que le vrai BIOS, PAS le même caractère au même endroit) ; le curseur logique **n'est pas déplacé** | `BH`=périphérique (`1`=LCD parallèle, `2`=LCD I2C), `BL`=couleur (**sans effet pour l'instant** — réservée à l'UART, prochaine version), `CX`=répétitions |
+| `02h` | Positionne le curseur **logique** du device `BH` (persiste en RAM — **un jeu de curseur par device** : LCD parallèle et LCD I2C n'interfèrent pas l'un avec l'autre) | `DH`=ligne (0-3), `DL`=colonne (0-19), `BH`=device (voir ci-dessous — `UART` : no-op, pas de position pour un flux série) |
+| `09h` | Écrit `AL` au curseur logique courant DU DEVICE `BH`, **`CX` fois de suite** (remplit `CX` cellules consécutives pour LCD/LCD I2C — même convention que le vrai BIOS, PAS le même caractère au même endroit ; pour `UART`, transmet simplement `AL` `CX` fois, sans notion de position) ; le curseur logique (LCD/LCD I2C) **n'est pas déplacé** | `BH`=device (`1`=LCD parallèle, `2`=LCD I2C, `3`=UART — voir `LCD`/`LCDI2C`/`UART`, `include/lcd_macros.inc`), `BL`=couleur (**sans effet pour l'instant** — réservée à l'UART, prochaine version), `CX`=répétitions |
 
 Le débordement d'une ligne de 20 suit l'auto-incrémentation DDRAM du
 HD44780 (adressage entrelacé des afficheurs 4 lignes « type A » —
@@ -448,6 +449,45 @@ HD44780 (adressage entrelacé des afficheurs 4 lignes « type A » —
 interne) : peut déborder sur une **autre** ligne visible, sans
 écrêtage logiciel. Aucune vérification de bornes sur `DH`/`DL` (même
 choix que `Edit RAM`).
+
+### Macros `gotoxy` / `print` (`include/lcd_macros.inc`)
+
+Façon normale d'utiliser `INT 10h` — remplacent `lcd_goto`/`lcd_show`/
+`i2c_lcd_goto`/`i2c_lcd_show` ET les paires `mov si,texte` / `call
+uart_tx_string` par un affichage passant systématiquement par `INT 10h` :
+
+```asm
+gotoxy 0, 0, LCD                    ; positionne (ligne, colonne, device)
+print  lcd_txt_splash_l1, LCD       ; affiche (texte, device)
+```
+
+| Constante | Valeur | Device |
+|---|---|---|
+| `LCD` | 1 | LCD parallèle |
+| `LCDI2C` | 2 | LCD I2C (PCF8574 `0x27`) |
+| `UART` | 3 | UART logiciel (pas de curseur — `gotoxy` y est un no-op) |
+
+`print` appelle `int10h_print_string`, qui affiche caractère par
+caractère pour `LCD`/`LCDI2C` (repositionnement `AH=02h` avant chaque
+caractère, puisque `AH=09h` ne déplace pas le curseur logique) ou
+transmet directement pour `UART` (pas de position à gérer). Aucun
+registre appelant n'est affecté (`int10h_handler`/
+`int10h_print_string` préservent tout).
+
+**Portée de la conversion** : tous les affichages de texte **simples**
+(une seule chaîne, autonome) sont passés par `gotoxy`/`print` — écran
+de démarrage, écrans I2C, menus, messages de fin/erreur. Les
+**bandeaux composés** (plusieurs fragments de texte entrelacés avec
+des valeurs hexadécimales/décimales calculées sur la même ligne — ex.
+le bandeau adresses de `dump_memory_action`, `dump_line`,
+`msg_bloc_progression` lignes 2/4, `msg_defaut_detail`, la ligne de
+progression d'`effet1`) gardent les appels directs
+(`uart_tx_string`/`lcd_print`/`i2c_lcd_print`) : `AH=09h` ne déplace
+pas le curseur logique, donc un enchaînement `print` + valeur
+dynamique + `print` devrait repositionner explicitement entre chaque
+fragment — les appels directs (qui s'appuient sur l'auto-incrément
+matériel du DDRAM ou sur `uart_tx_byte`/`uart_tx_hex_word` bruts)
+restent plus simples pour ce cas précis.
 
 **`INT 16h` — clavier** (`int16h_handler`) :
 
@@ -472,16 +512,15 @@ code PS/2 Set 2 brut de la touche reconnue, en plus de `AL` — ajouté
 pour `int16h_handler` (aucun appelant existant n'utilisait `BH`, déjà
 « détruit » avant ce changement).
 
-Ces interruptions existent comme **interface disponible en parallèle**
-des appels directs (`lcd_print`, `ps2_get_char`, etc.). Premier
-utilisateur réel : l'**écran de démarrage** (`start:`, LCD parallèle,
-1 seconde) est maintenant affiché via `splash_print_line`, qui appelle
-`INT 10h` caractère par caractère (`AH=02h` pour repositionner, puis
-`AH=09h` — `AH=09h` ne déplaçant pas le curseur logique, `AH=02h` doit
-être répété avant chaque caractère). Le reste du menu interactif
-(dispatch, `Edit RAM`, `Dump memory`, l'écran LCD I2C) continue
-d'utiliser les appels directs pour l'instant, sans changement de
-comportement.
+`INT 16h` existe comme **interface disponible en parallèle** de
+`ps2_get_char` — rien ne l'appelle encore. `INT 10h`, lui, est
+maintenant le chemin normal pour tout affichage de texte **simple**
+via les macros `gotoxy`/`print` (voir la sous-section suivante) : écran
+de démarrage, écrans I2C, menus, messages de fin/erreur. Les bandeaux
+composés (`dump_memory_action`, `dump_line`, `msg_bloc_progression`,
+`msg_defaut_detail`, `effet1`) continuent d'utiliser les appels
+directs (`lcd_print`/`i2c_lcd_print`/`uart_tx_string` et les routines
+hexadécimales/décimales), sans changement de comportement.
 
 ## Menu interactif
 

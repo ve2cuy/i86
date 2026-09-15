@@ -100,8 +100,7 @@ SECONDE         equ     1000            ; 1 seconde = 1000 ms
 ; ------------------------------------------------------------
 
 %macro cls 0
-        mov     si, CLS         ; efface l'ecran du terminal (ANSI)
-        call    uart_tx_string
+        print   CLS, UART       ; efface l'ecran du terminal (ANSI)
 %endmacro
 
 ; --- ascii_or_dot: remplace AL par '.' s'il n'est pas imprimable
@@ -174,8 +173,7 @@ start:
         ; ENTREE par init_8255/MASQUE_PIO ci-dessus). REMPLACE le
         ; reste du POST - voir lib/ps2.asm et la note pres de
         ; %define TEST_PS2 en haut du fichier. Ne retourne JAMAIS. ---
-        mov     si, txt_ps2_attente
-        call    uart_tx_string
+        print   txt_ps2_attente, UART
 .ps2_loop:
         call    ps2_read_byte    ; bloque - AL=scan code recu, CF=1 si trame invalide
         pushf                    ; CF doit survivre aux appels UART qui suivent
@@ -185,12 +183,10 @@ start:
         call    uart_tx_hex_byte ; affiche le scan code en hexa (AL toujours valide)
         popf
         jnc     .ps2_ok
-        mov     si, txt_ps2_erreur
-        call    uart_tx_string
+        print   txt_ps2_erreur, UART
         jmp     .ps2_next
 .ps2_ok:
-        mov     si, txt_crlf
-        call    uart_tx_string
+        print   txt_crlf, UART
 .ps2_next:
         jmp     .ps2_loop
 %endif
@@ -203,34 +199,31 @@ start:
         ; un partage avec E; place ici simplement pour rester groupe
         ; avec le reste de l'init materielle ---
         call    i2c_lcd_init
-        mov     si, lcd_txt_splash_l1          ; "Breadboard 8088"
-        i2c_lcd_show LCD_LINE1
-        mov     si, lcd_txt_splash_l2          ; "Version 1.0"
-        i2c_lcd_show LCD_LINE2
-        mov     si, i2c_txt_uart_params        ; "UART: 9600 8N1"
-        i2c_lcd_show LCD_LINE3
-        mov     si, lcd_txt_splash_l4          ; "(c) VE2CUY 2026"
-        i2c_lcd_show LCD_LINE4
+        gotoxy  0, 0, LCDI2C
+        print   lcd_txt_splash_l1, LCDI2C      ; "Breadboard 8088"
+        gotoxy  1, 0, LCDI2C
+        print   lcd_txt_splash_l2, LCDI2C      ; "Version 1.0"
+        gotoxy  2, 0, LCDI2C
+        print   i2c_txt_uart_params, LCDI2C    ; "UART: 9600 8N1"
+        gotoxy  3, 0, LCDI2C
+        print   lcd_txt_splash_l4, LCDI2C      ; "(c) VE2CUY 2026"
 
         ; --- Ecran de demarrage: affiche une seule fois (pas a chaque
         ; cycle de .ici, contrairement au reste de l'affichage LCD),
         ; pendant 1 seconde, avant d'entrer dans la boucle principale.
-        ; Affiche via INT 10h (AH=02h/09h) plutot que lcd_goto/
-        ; lcd_print directement - premier usage reel de l'interface
-        ; "esprit BIOS" (voir int10h_handler, README.md) ---
+        ; Affiche via INT 10h (gotoxy/print, voir include/lcd_macros.inc)
+        ; plutot que lcd_goto/lcd_print directement - premier usage
+        ; reel de l'interface "esprit BIOS" (voir int10h_handler,
+        ; README.md) ---
         call    lcd_init
-        mov     si, lcd_txt_splash_l1
-        mov     dh, 0
-        call    splash_print_line
-        mov     si, lcd_txt_splash_l2
-        mov     dh, 1
-        call    splash_print_line
-        mov     si, lcd_txt_splash_l3
-        mov     dh, 2
-        call    splash_print_line
-        mov     si, lcd_txt_splash_l4
-        mov     dh, 3
-        call    splash_print_line
+        gotoxy  0, 0, LCD
+        print   lcd_txt_splash_l1, LCD
+        gotoxy  1, 0, LCD
+        print   lcd_txt_splash_l2, LCD
+        gotoxy  2, 0, LCD
+        print   lcd_txt_splash_l3, LCD
+        gotoxy  3, 0, LCD
+        print   lcd_txt_splash_l4, LCD
         delay_ms (1*SECONDE)
 
         ; --- Bandeau d'identification: affiche une seule fois, avant
@@ -239,8 +232,7 @@ start:
         ; interactif, pilote par le clavier PS/2, est maintenant le
         ; comportement normal) ---
         cls                     ; efface l'ecran du terminal (ANSI)
-        mov     si, txt_auteur
-        call    uart_tx_string
+        print   txt_auteur, UART
 
 ; ============================================================
 ; Menu principal / menu Dump memory
@@ -252,26 +244,25 @@ start:
 ; ============================================================
 .main_menu:
         call    lcd_init                ; ecran propre pour le menu
-        mov     si, txt_menu_main
-        call    uart_tx_string
-        mov     si, lcd_txt_menu_main_l1
-        lcd_show LCD_LINE1
-        mov     si, lcd_txt_menu_main_l2
-        lcd_show LCD_LINE2
-        mov     si, lcd_txt_menu_main_l3
-        lcd_show LCD_LINE3
-        mov     si, lcd_txt_menu_main_l4
-        lcd_show LCD_LINE4
+        print   txt_menu_main, UART
+        gotoxy  0, 0, LCD
+        print   lcd_txt_menu_main_l1, LCD
+        gotoxy  1, 0, LCD
+        print   lcd_txt_menu_main_l2, LCD
+        gotoxy  2, 0, LCD
+        print   lcd_txt_menu_main_l3, LCD
+        gotoxy  3, 0, LCD
+        print   lcd_txt_menu_main_l4, LCD
 
         call    ps2_get_char            ; bloque jusqu'a une touche reconnue
 
         cmp     al, '1'
         jne     .main_2
         call    lcd_init
-        mov     si, lcd_txt_run_ram_l1
-        lcd_show LCD_LINE1
-        mov     si, lcd_txt_run_ram_l2
-        lcd_show LCD_LINE2
+        gotoxy  0, 0, LCD
+        print   lcd_txt_run_ram_l1, LCD
+        gotoxy  1, 0, LCD
+        print   lcd_txt_run_ram_l2, LCD
         call    test_ram                ; teste toute la RAM (128K), rapporte via UART+LCD
         jmp     .main_menu
 .main_2:
@@ -282,12 +273,13 @@ start:
         cmp     al, '3'
         jne     .main_4
         call    lcd_init
-        mov     si, lcd_txt_run_led_l1
-        lcd_show LCD_LINE1
-        mov     si, lcd_txt_run_led_l2
-        lcd_show LCD_LINE2
-        mov     si, lcd_txt_run_led_l4  ; texte fixe (ligne 3 = progression
-        lcd_show LCD_LINE4              ; live, mise a jour par effet1)
+        gotoxy  0, 0, LCD
+        print   lcd_txt_run_led_l1, LCD
+        gotoxy  1, 0, LCD
+        print   lcd_txt_run_led_l2, LCD
+        gotoxy  3, 0, LCD
+        print   lcd_txt_run_led_l4, LCD ; texte fixe (ligne 3 = progression
+                                         ; live, mise a jour par effet1)
         call    effet1                  ; animation Port C (chenillard)
         jmp     .main_menu
 .main_4:
@@ -298,14 +290,13 @@ start:
 
 .dump_menu:
         call    lcd_init
-        mov     si, txt_menu_dump
-        call    uart_tx_string
-        mov     si, lcd_txt_menu_dump_l1
-        lcd_show LCD_LINE1
-        mov     si, lcd_txt_menu_dump_l2
-        lcd_show LCD_LINE2
-        mov     si, lcd_txt_menu_dump_l4
-        lcd_show LCD_LINE4
+        print   txt_menu_dump, UART
+        gotoxy  0, 0, LCD
+        print   lcd_txt_menu_dump_l1, LCD
+        gotoxy  1, 0, LCD
+        print   lcd_txt_menu_dump_l2, LCD
+        gotoxy  3, 0, LCD
+        print   lcd_txt_menu_dump_l4, LCD
 
         call    ps2_get_char
 
@@ -723,13 +714,11 @@ dump_memory_action:
         jmp     .done
 
 .interrupted:
-        mov     si, txt_dump_interrupted
-        call    uart_tx_string
+        print   txt_dump_interrupted, UART
         jmp     .done
 
 .invalid_range:
-        mov     si, txt_dump_invalid_range
-        call    uart_tx_string
+        print   txt_dump_invalid_range, UART
 
 .done:
         pop     es
@@ -796,8 +785,7 @@ edit_ram_action:
         call    uart_tx_byte
         mov     al, 10
         call    uart_tx_byte
-        mov     si, txt_edit_help
-        call    uart_tx_string
+        print   txt_edit_help, UART
 
         ; --- memorise l'adresse de base et remet le curseur logique
         ; a (0,0) - vivent en RAM, voir hardware.inc ---
@@ -1372,10 +1360,8 @@ i2c_dump_hex_ascii8_line:
 ; Annonce le debut du test avec le plan des blocs a tester.
 ; ============================================================
 msg_banniere:
-        mov     si, txt_banniere1
-        call    uart_tx_string
-        mov     si, txt_banniere2
-        call    uart_tx_string
+        print   txt_banniere1, UART
+        print   txt_banniere2, UART
         ret
 
 ; ============================================================
@@ -1477,15 +1463,14 @@ msg_bloc_progression:
         call    lcd_tx_hex_word
 
         ; --- Ligne 3 du LCD: etat en toutes lettres ---
-        lcd_goto LCD_LINE3
         cmp     bp, 0
         je      .lcd_ok
-        mov     si, lcd_txt_etat_defaut
-        call    lcd_print
+        gotoxy  2, 0, LCD
+        print   lcd_txt_etat_defaut, LCD
         jmp     .lcd_etat_fin
 .lcd_ok:
-        mov     si, lcd_txt_etat_ok
-        call    lcd_print
+        gotoxy  2, 0, LCD
+        print   lcd_txt_etat_ok, LCD
 .lcd_etat_fin:
 
         ; --- Ligne 4 du LCD: compteurs cumulatifs "Bloc:NNN/127 Def:NNN"
@@ -1563,21 +1548,18 @@ msg_defaut_detail:
 ; msg_ram_ok / msg_ram_defectueuse
 ; ============================================================
 msg_ram_ok:
-        mov     si, txt_ram_ok
-        call    uart_tx_string
+        print   txt_ram_ok, UART
         ret
 
 msg_ram_defectueuse:
-        mov     si, txt_ram_defaut
-        call    uart_tx_string
+        print   txt_ram_defaut, UART
         ret
 
 ; ============================================================
 ; msg_dump_fin
 ; ============================================================
 msg_dump_fin:
-        mov     si, txt_dump_fin
-        call    uart_tx_string
+        print   txt_dump_fin, UART
         ret
 
 
@@ -1684,10 +1666,11 @@ delay2:
 ; Peuple l'IVT (segment 0000h, RAM) pour INT 10h (affichage) et
 ; INT 16h (clavier) - chaque entree est un pointeur FAR (offset puis
 ; segment, 4 octets, a l'adresse INT_NUM*4) vers int10h_handler/
-; int16h_handler ci-dessous. Initialise aussi le curseur logique
-; "esprit BIOS" (BIOS_CURSOR_ROW_OFF/COL_OFF) a (0,0). Appelee une
-; seule fois au demarrage (voir start:), avant toute utilisation de
-; INT 10h/16h.
+; int16h_handler ci-dessous. Initialise aussi les curseurs logiques
+; "esprit BIOS" (un jeu par device LCD/LCD I2C - voir
+; BIOS_CURSOR_LCD_*/BIOS_CURSOR_LCDI2C_*, hardware.inc) a (0,0).
+; Appelee une seule fois au demarrage (voir start:), avant toute
+; utilisation de INT 10h/16h.
 ; ============================================================
 setup_bios_interrupts:
         push    ax
@@ -1702,9 +1685,13 @@ setup_bios_interrupts:
 
         mov     ax, VAR_SEG
         mov     es, ax
-        mov     di, BIOS_CURSOR_ROW_OFF
+        mov     di, BIOS_CURSOR_LCD_ROW_OFF
         mov     byte [es:di], 0
-        mov     di, BIOS_CURSOR_COL_OFF
+        mov     di, BIOS_CURSOR_LCD_COL_OFF
+        mov     byte [es:di], 0
+        mov     di, BIOS_CURSOR_LCDI2C_ROW_OFF
+        mov     byte [es:di], 0
+        mov     di, BIOS_CURSOR_LCDI2C_COL_OFF
         mov     byte [es:di], 0
 
         pop     es
@@ -1745,37 +1732,43 @@ bios_cursor_ddram:
 ; ============================================================
 ; int10h_handler
 ; Gestionnaire de INT 10h (affichage), sous-ensemble "esprit BIOS"
-; adapte a ce materiel (2 LCD HD44780 4x20 - pas de memoire video ni
-; de VGA):
+; adapte a ce materiel (2 LCD HD44780 4x20 + UART - pas de memoire
+; video ni de VGA). Voir aussi les macros gotoxy/print
+; (include/lcd_macros.inc), qui sont la facon normale d'utiliser cette
+; interface plutot que de preparer les registres et faire "int 10h"
+; a la main.
 ;
-;   AH=02h - Positionne le curseur LOGIQUE (persiste en RAM, voir
-;            BIOS_CURSOR_ROW_OFF/COL_OFF): DH=ligne (0-3), DL=colonne
-;            (0-19). Aucune verification de bornes. Ce curseur est
-;            PARTAGE entre les 2 afficheurs (le HD44780 n'a pas de
-;            notion de "curseur commun" a 2 peripheriques distincts -
-;            voir AH=09h) - repositionner avant d'ecrire sur l'autre
-;            afficheur si necessaire.
+;   AH=02h - Positionne le curseur LOGIQUE du device BH (persiste en
+;            RAM - voir BIOS_CURSOR_LCD_*/BIOS_CURSOR_LCDI2C_*,
+;            hardware.inc): DH=ligne (0-3), DL=colonne (0-19). UN JEU
+;            DE CURSEUR PAR DEVICE (LCD parallele et LCD I2C
+;            n'interferent pas l'un avec l'autre). Aucune verification
+;            de bornes. BH=UART (3, ou toute autre valeur que 1/2):
+;            no-op (un flux serie n'a pas de position).
 ;
-;   AH=09h - Ecrit AL au curseur logique courant, CX fois de suite
-;            (remplit CX cellules CONSECUTIVES a partir de cette
-;            position - meme convention que le vrai BIOS IBM PC, PAS
-;            "le meme caractere CX fois au meme endroit"). Le
-;            debordement d'une ligne de 20 suit l'auto-increment
-;            materiel du HD44780 (adressage DDRAM entrelace des
-;            afficheurs 4 lignes "type A" - LCD_LINE3/4 suivent
-;            directement LCD_LINE1/2 en memoire interne) et peut
-;            deborder sur une AUTRE ligne visible - pas d'ecretage
-;            logiciel. Registres:
+;   AH=09h - Ecrit AL au curseur logique courant DU DEVICE BH, CX fois
+;            de suite (remplit CX cellules CONSECUTIVES a partir de
+;            cette position pour LCD/LCD I2C - meme convention que le
+;            vrai BIOS IBM PC, PAS "le meme caractere CX fois au meme
+;            endroit"; pour UART, transmet simplement AL, CX fois de
+;            suite, sans notion de position). Le debordement d'une
+;            ligne LCD de 20 suit l'auto-increment materiel du HD44780
+;            (adressage DDRAM entrelace des afficheurs 4 lignes
+;            "type A" - LCD_LINE3/4 suivent directement LCD_LINE1/2 en
+;            memoire interne) et peut deborder sur une AUTRE ligne
+;            visible - pas d'ecretage logiciel. Registres:
 ;              BH = peripherique cible: 1 = LCD parallele,
-;                   2 = LCD I2C (PCF8574) - toute autre valeur est
-;                   ignoree (aucun affichage).
+;                   2 = LCD I2C (PCF8574), 3 = UART - toute autre
+;                   valeur est ignoree (aucun affichage). Voir
+;                   LCD/LCDI2C/UART (include/lcd_macros.inc).
 ;              BL = couleur - actuellement SANS EFFET (reservee pour
 ;                   une prochaine version: sortie couleur via codes
 ;                   ANSI sur l'UART - voir Directives.md).
 ;              CX = nombre de repetitions (0 = aucun effet).
-;            Le curseur logique N'EST PAS deplace par cet appel (meme
-;            comportement que le vrai BIOS AH=09h) - un appel
-;            ulterieur a AH=02h est necessaire pour ecrire ailleurs.
+;            Le curseur logique (LCD/LCD I2C) N'EST PAS deplace par
+;            cet appel (meme comportement que le vrai BIOS AH=09h) -
+;            un appel ulterieur a AH=02h est necessaire pour ecrire
+;            ailleurs.
 ;
 ; Toute autre valeur de AH est ignoree (retour immediat).
 ; ============================================================
@@ -1798,9 +1791,21 @@ int10h_handler:
 .set_cursor:
         mov     ax, VAR_SEG
         mov     es, ax
-        mov     di, BIOS_CURSOR_ROW_OFF
+        cmp     bh, 1
+        je      .cursor_lcd
+        cmp     bh, 2
+        je      .cursor_lcdi2c
+        jmp     .done                            ; UART (ou non reconnu): pas de curseur
+.cursor_lcd:
+        mov     di, BIOS_CURSOR_LCD_ROW_OFF
         mov     [es:di], dh
-        mov     di, BIOS_CURSOR_COL_OFF
+        mov     di, BIOS_CURSOR_LCD_COL_OFF
+        mov     [es:di], dl
+        jmp     .done
+.cursor_lcdi2c:
+        mov     di, BIOS_CURSOR_LCDI2C_ROW_OFF
+        mov     [es:di], dh
+        mov     di, BIOS_CURSOR_LCDI2C_COL_OFF
         mov     [es:di], dl
         jmp     .done
 
@@ -1808,27 +1813,28 @@ int10h_handler:
         cmp     cx, 0
         je      .done                            ; rien a ecrire
 
+        cmp     bh, 3
+        je      .dev_uart                        ; UART: pas de curseur - transmet direct
+
         mov     bp, ax                           ; BP = caractere original (AL) -
                                                    ; AX va servir de scratch pour
                                                    ; acceder a VAR_SEG
         mov     ax, VAR_SEG
         mov     es, ax
-        mov     di, BIOS_CURSOR_ROW_OFF
-        mov     dh, [es:di]                      ; DH = ligne
-        mov     di, BIOS_CURSOR_COL_OFF
-        mov     dl, [es:di]                      ; DL = colonne
-        call    bios_cursor_ddram                ; AH = adresse DDRAM (DH/DL consommes)
-
-        mov     al, ah
-        or      al, 80h                          ; AL = commande "Set DDRAM Address"
-
         cmp     bh, 1
-        je      .dev_lcd
+        je      .load_lcd
         cmp     bh, 2
-        je      .dev_i2c
+        je      .load_lcdi2c
         jmp     .done                            ; peripherique non reconnu - ignore
 
-.dev_lcd:
+.load_lcd:
+        mov     di, BIOS_CURSOR_LCD_ROW_OFF
+        mov     dh, [es:di]                      ; DH = ligne
+        mov     di, BIOS_CURSOR_LCD_COL_OFF
+        mov     dl, [es:di]                      ; DL = colonne
+        call    bios_cursor_ddram                ; AH = adresse DDRAM (DH/DL consommes)
+        mov     al, ah
+        or      al, 80h                          ; AL = commande "Set DDRAM Address"
         call    lcd_command                      ; positionne le curseur materiel
         mov     ax, bp                           ; restaure AL = caractere
 .dev_lcd_loop:
@@ -1836,12 +1842,27 @@ int10h_handler:
         loop    .dev_lcd_loop
         jmp     .done
 
-.dev_i2c:
+.load_lcdi2c:
+        mov     di, BIOS_CURSOR_LCDI2C_ROW_OFF
+        mov     dh, [es:di]
+        mov     di, BIOS_CURSOR_LCDI2C_COL_OFF
+        mov     dl, [es:di]
+        call    bios_cursor_ddram                ; AH = adresse DDRAM (DH/DL consommes)
+        mov     al, ah
+        or      al, 80h
         call    i2c_lcd_command                  ; positionne le curseur materiel
         mov     ax, bp                           ; restaure AL = caractere
 .dev_i2c_loop:
         call    i2c_lcd_data
         loop    .dev_i2c_loop
+        jmp     .done
+
+.dev_uart:
+        ; AL est deja le caractere a transmettre (aucun acces a
+        ; VAR_SEG necessaire - pas de curseur pour ce device)
+.dev_uart_loop:
+        call    uart_tx_byte
+        loop    .dev_uart_loop
 
 .done:
         pop     es
@@ -1933,45 +1954,91 @@ int16h_handler:
         iret
 
 ; ============================================================
-; splash_print_line
-; Affiche UNE ligne (jusqu'a 20 caracteres, terminee par 0) via
-; INT 10h (AH=02h puis AH=09h caractere par caractere) plutot que
-; lcd_goto/lcd_print directement - utilisee par l'ecran de demarrage
-; (voir start:) pour exercer l'interface "esprit BIOS" (voir
-; int10h_handler). AH=09h n'avance pas le curseur logique (meme
-; convention que le vrai BIOS) - AH=02h doit donc repositionner
-; explicitement avant CHAQUE caractere. Cible le LCD PARALLELE
-; uniquement (BH=1).
+; int10h_print_string
+; Affiche une chaine terminee par 0 (jusqu'a 20 caracteres pour les
+; LCD) via INT 10h (AH=09h) - procedure appelee par la macro "print"
+; (include/lcd_macros.inc), la facon normale d'utiliser cette
+; interface.
 ;
-; Repose sur le fait qu'int10h_handler preserve integralement AX pour
-; AH=02h/09h (aucune sortie documentee dans AX pour ces 2 fonctions -
-; voir son en-tete): AL survit donc a l'appel AH=02h ci-dessous sans
-; sauvegarde explicite.
+; LCD (BH=1) / LCD I2C (BH=2): relit la position de depart courante
+; DU DEVICE CONCERNE (deja fixee par un "gotoxy ligne, colonne,
+; device" prealable - voir int10h_handler, AH=02h), puis positionne
+; (AH=02h) et ecrit (AH=09h) CARACTERE PAR CARACTERE, en avancant la
+; colonne a chaque fois: AH=09h ne deplace PAS le curseur logique
+; (meme convention que le vrai BIOS), il faut donc repositionner
+; explicitement avant CHAQUE caractere.
 ;
-; Entree:  DH = ligne (0-3), DS:SI = texte termine par 0
-; Detruit: AX, BX, CX, SI. DX est preserve (DL sert de compteur de
-; colonne en interne, restaure avant le retour).
+; UART (BH=3): un flux serie n'a pas de position - transmet
+; directement chaque caractere (AH=09h seul, un "gotoxy" prealable y
+; serait un no-op de toute facon - voir int10h_handler).
+;
+; Entree:  BH = device (LCD/LCDI2C/UART - voir include/lcd_macros.inc),
+;          DS:SI = texte termine par 0
+; Detruit: rien (AX/BX/CX/DX/SI/DI/ES tous preserves)
 ; ============================================================
-splash_print_line:
+int10h_print_string:
+        push    ax
+        push    bx
+        push    cx
         push    dx
-        mov     dl, 0                    ; DL = colonne courante
-.next_char:
+        push    si
+        push    di
+        push    es
+
+        mov     bl, 0                    ; BL = couleur, N/A pour l'instant
+
+        cmp     bh, 3
+        je      .uart_loop
+
+        ; --- LCD / LCD I2C: relit la position de depart courante DE
+        ; CE DEVICE (deja fixee par gotoxy) ---
+        mov     ax, VAR_SEG
+        mov     es, ax
+        cmp     bh, 2
+        je      .read_lcdi2c
+        mov     di, BIOS_CURSOR_LCD_ROW_OFF
+        mov     dh, [es:di]
+        mov     di, BIOS_CURSOR_LCD_COL_OFF
+        mov     dl, [es:di]
+        jmp     .next_char_lcd
+.read_lcdi2c:
+        mov     di, BIOS_CURSOR_LCDI2C_ROW_OFF
+        mov     dh, [es:di]
+        mov     di, BIOS_CURSOR_LCDI2C_COL_OFF
+        mov     dl, [es:di]
+
+.next_char_lcd:
         mov     al, [si]
         cmp     al, 0
         je      .done
         mov     ah, 02h
-        int     10h                      ; positionne (DH,DL) - AX preserve, AL
-                                          ; contient toujours le caractere apres
+        int     10h                      ; positionne (DH,DL) sur BH - AX/BX
+                                          ; preserves par int10h_handler
         mov     ah, 09h
-        mov     bh, 1                    ; 1 = LCD parallele
-        mov     bl, 0                    ; couleur: N/A
         mov     cx, 1                    ; un seul caractere
-        int     10h                      ; ecrit AL a (DH,DL)
+        int     10h                      ; ecrit AL a (DH,DL) sur BH
         inc     si
         inc     dl
-        jmp     .next_char
+        jmp     .next_char_lcd
+
+.uart_loop:
+        mov     al, [si]
+        cmp     al, 0
+        je      .done
+        mov     ah, 09h
+        mov     cx, 1
+        int     10h                      ; BH=3 -> transmission directe, sans position
+        inc     si
+        jmp     .uart_loop
+
 .done:
+        pop     es
+        pop     di
+        pop     si
         pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
         ret
 
 ; -------------------------------------------------------------------------------------------------

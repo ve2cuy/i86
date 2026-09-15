@@ -61,10 +61,14 @@ DUMP_LINES_LEFT_OFF equ     0FC0Fh  ; lignes de 16 octets restant a
                                      ; detruit CX, un compteur "loop"
                                      ; classique n'y survivrait pas)
 
-; --- curseur logique de int10h_handler (solution-01.asm), AH=02h/09h
-; --- "esprit BIOS" - partage entre les 2 afficheurs (LCD parallele/
-; --- LCD I2C), voir l'en-tete de int10h_handler ---
-BIOS_CURSOR_ROW_OFF equ     0FC11h  ; ligne courante (0-3)
-BIOS_CURSOR_COL_OFF equ     0FC12h  ; colonne courante (0-19)
+; --- curseurs logiques de int10h_handler (solution-01.asm), AH=02h/
+; --- 09h "esprit BIOS" - UN JEU PAR DEVICE (LCD parallele / LCD I2C)
+; --- depuis l'ajout des macros gotoxy/print (voir
+; --- include/lcd_macros.inc et l'en-tete de int10h_handler). UART
+; --- n'a pas de curseur (flux serie, AH=02h y est un no-op). ---
+BIOS_CURSOR_LCD_ROW_OFF    equ 0FC11h  ; LCD parallele: ligne courante (0-3)
+BIOS_CURSOR_LCD_COL_OFF    equ 0FC12h  ; LCD parallele: colonne courante (0-19)
+BIOS_CURSOR_LCDI2C_ROW_OFF equ 0FC13h  ; LCD I2C: ligne courante (0-3)
+BIOS_CURSOR_LCDI2C_COL_OFF equ 0FC14h  ; LCD I2C: colonne courante (0-19)
 
 %endif ; HARDWARE_INC
