@@ -429,6 +429,15 @@ frontière de segment. Si l'adresse de fin est antérieure à celle de
 départ, la plage est rejetée (message d'erreur UART, rien n'est
 dumpé).
 
+⚠️ **Piège classique — les 16 derniers octets de la ROM** : ce ne sont
+**PAS** `FFFF:FFF0`-`FFFF:FFFF`. Le 8088 n'a que 20 lignes d'adresse
+(pas de ligne A20) : l'adresse physique réelle (`segment×16 + offset`)
+**boucle** au-delà de `FFFFFh`, donc `FFFF:FFF0` calcule en réalité
+`10FFE0h`, qui boucle à `0FFE0h` — de la RAM basse, pas la ROM. La
+bonne plage utilise le même segment que le vecteur de reset matériel :
+`F000:FFF0` à `F000:FFFF` (`F000h×16 + FFF0h = FFFF0h`, les 16
+derniers octets physiques de la ROM : vecteur de reset + signature).
+
 La touche **Échap** interrompt un dump en cours et retourne
 immédiatement au menu Dump memory. Vérifiée de façon **non bloquante**
 avant chaque ligne (`CLOCK`/`PB0` est haut au repos — un simple
