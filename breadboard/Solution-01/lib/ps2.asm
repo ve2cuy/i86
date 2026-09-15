@@ -271,7 +271,14 @@ ps2_extended_to_char:
 ; sequence, ainsi que les touches non reconnues (normales ou
 ; etendues).
 ; Sortie: AL = caractere ASCII de la touche pressee, OU PS2_KEY_UP/
-;         DOWN/LEFT/RIGHT pour une fleche.
+;         DOWN/LEFT/RIGHT pour une fleche. BH = scan code PS/2 Set 2
+;         BRUT de cette touche (le second octet, pour une touche
+;         etendue) - ajoute pour int16h_handler (solution-01.asm),
+;         qui l'expose en AH ("esprit BIOS", voir sa doc). Aucun
+;         appelant existant n'utilisait BH (deja "detruit" avant ce
+;         changement) - ps2_scancode_to_char/ps2_extended_to_char
+;         preservent BX (push/pop), donc le sauvegarder AVANT de les
+;         appeler suffit.
 ; Detruit: AX, BX, CX, DX. Jamais SI/DI/ES/BP.
 ; ============================================================
 ps2_get_char:
@@ -282,9 +289,11 @@ ps2_get_char:
         cmp     al, 0F0h
         je      .got_f0
         ; --- scan code de pression (make code) normal ---
+        mov     bh, al          ; BH = scan code brut (survit a l'appel
+                                 ; suivant, qui preserve BX)
         call    ps2_scancode_to_char
         jc      .loop           ; touche non geree - ignore, reboucle
-        ret                     ; AL = caractere reconnu
+        ret                     ; AL = caractere reconnu, BH = scan code brut
 .got_e0:
         ; --- touche etendue: le prochain octet est soit F0 (relachement
         ; etendu, encore a consommer) soit le scan code de la pression
@@ -292,9 +301,10 @@ ps2_get_char:
         call    ps2_read_byte
         cmp     al, 0F0h
         je      .got_e0_f0
+        mov     bh, al          ; BH = scan code brut (etendu)
         call    ps2_extended_to_char
         jc      .loop           ; touche etendue non geree - ignore, reboucle
-        ret                     ; AL = PS2_KEY_UP/DOWN/LEFT/RIGHT
+        ret                     ; AL = PS2_KEY_UP/DOWN/LEFT/RIGHT, BH = scan code brut
 .got_e0_f0:
         call    ps2_read_byte   ; consomme le scan code du relachement etendu
         jmp     .loop

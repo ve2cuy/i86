@@ -164,6 +164,9 @@ start:
         mov     [es:di], al
         out     PORTA, al
 
+        call    setup_bios_interrupts  ; peuple l'IVT pour INT 10h/16h
+                                         ; ("esprit BIOS" - voir plus bas)
+
 %ifdef TEST_PS2
         ; --- Test PS/2 (TEST_PS2): boucle infinie qui affiche sur
         ; l'UART le scan code (Set 2, brut) de chaque trame recue du
@@ -1669,6 +1672,258 @@ delay2:
 	ret
 ;*** END delay
 
+; ============================================================
+; setup_bios_interrupts
+; Peuple l'IVT (segment 0000h, RAM) pour INT 10h (affichage) et
+; INT 16h (clavier) - chaque entree est un pointeur FAR (offset puis
+; segment, 4 octets, a l'adresse INT_NUM*4) vers int10h_handler/
+; int16h_handler ci-dessous. Initialise aussi le curseur logique
+; "esprit BIOS" (BIOS_CURSOR_ROW_OFF/COL_OFF) a (0,0). Appelee une
+; seule fois au demarrage (voir start:), avant toute utilisation de
+; INT 10h/16h.
+; ============================================================
+setup_bios_interrupts:
+        push    ax
+        push    es
+
+        xor     ax, ax
+        mov     es, ax                          ; ES = 0000h (segment de l'IVT)
+        mov     word [es:10h*4], int10h_handler
+        mov     word [es:10h*4+2], cs
+        mov     word [es:16h*4], int16h_handler
+        mov     word [es:16h*4+2], cs
+
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, BIOS_CURSOR_ROW_OFF
+        mov     byte [es:di], 0
+        mov     di, BIOS_CURSOR_COL_OFF
+        mov     byte [es:di], 0
+
+        pop     es
+        pop     ax
+        ret
+
+; ============================================================
+; bios_cursor_ddram
+; Calcule l'adresse DDRAM (SANS le bit de commande) correspondant a
+; DH=ligne (0-3) / DL=colonne (0-19) - meme convention 4x20 que
+; LCD_LINE1..4 (include/lcd_macros.inc), utilisee par int10h_handler.
+; Aucune verification de bornes (meme choix que edit_ram_action).
+; Entree:  DH = ligne, DL = colonne
+; Sortie:  AH = adresse DDRAM (0-127)
+; Detruit: rien d'autre que AH
+; ============================================================
+bios_cursor_ddram:
+        push    bx
+        cmp     dh, 0
+        je      .r0
+        cmp     dh, 1
+        je      .r1
+        cmp     dh, 2
+        je      .r2
+        mov     bl, LCD_LINE4 & 07Fh
+        jmp     .add_col
+.r0:    mov     bl, LCD_LINE1 & 07Fh
+        jmp     .add_col
+.r1:    mov     bl, LCD_LINE2 & 07Fh
+        jmp     .add_col
+.r2:    mov     bl, LCD_LINE3 & 07Fh
+.add_col:
+        add     bl, dl
+        mov     ah, bl
+        pop     bx
+        ret
+
+; ============================================================
+; int10h_handler
+; Gestionnaire de INT 10h (affichage), sous-ensemble "esprit BIOS"
+; adapte a ce materiel (2 LCD HD44780 4x20 - pas de memoire video ni
+; de VGA):
+;
+;   AH=02h - Positionne le curseur LOGIQUE (persiste en RAM, voir
+;            BIOS_CURSOR_ROW_OFF/COL_OFF): DH=ligne (0-3), DL=colonne
+;            (0-19). Aucune verification de bornes. Ce curseur est
+;            PARTAGE entre les 2 afficheurs (le HD44780 n'a pas de
+;            notion de "curseur commun" a 2 peripheriques distincts -
+;            voir AH=09h) - repositionner avant d'ecrire sur l'autre
+;            afficheur si necessaire.
+;
+;   AH=09h - Ecrit AL au curseur logique courant, CX fois de suite
+;            (remplit CX cellules CONSECUTIVES a partir de cette
+;            position - meme convention que le vrai BIOS IBM PC, PAS
+;            "le meme caractere CX fois au meme endroit"). Le
+;            debordement d'une ligne de 20 suit l'auto-increment
+;            materiel du HD44780 (adressage DDRAM entrelace des
+;            afficheurs 4 lignes "type A" - LCD_LINE3/4 suivent
+;            directement LCD_LINE1/2 en memoire interne) et peut
+;            deborder sur une AUTRE ligne visible - pas d'ecretage
+;            logiciel. Registres:
+;              BH = peripherique cible: 1 = LCD parallele,
+;                   2 = LCD I2C (PCF8574) - toute autre valeur est
+;                   ignoree (aucun affichage).
+;              BL = couleur - actuellement SANS EFFET (reservee pour
+;                   une prochaine version: sortie couleur via codes
+;                   ANSI sur l'UART - voir Directives.md).
+;              CX = nombre de repetitions (0 = aucun effet).
+;            Le curseur logique N'EST PAS deplace par cet appel (meme
+;            comportement que le vrai BIOS AH=09h) - un appel
+;            ulterieur a AH=02h est necessaire pour ecrire ailleurs.
+;
+; Toute autre valeur de AH est ignoree (retour immediat).
+; ============================================================
+int10h_handler:
+        push    ax
+        push    bx
+        push    cx
+        push    dx
+        push    si
+        push    di
+        push    bp
+        push    es
+
+        cmp     ah, 02h
+        je      .set_cursor
+        cmp     ah, 09h
+        je      .write_char
+        jmp     .done
+
+.set_cursor:
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, BIOS_CURSOR_ROW_OFF
+        mov     [es:di], dh
+        mov     di, BIOS_CURSOR_COL_OFF
+        mov     [es:di], dl
+        jmp     .done
+
+.write_char:
+        cmp     cx, 0
+        je      .done                            ; rien a ecrire
+
+        mov     bp, ax                           ; BP = caractere original (AL) -
+                                                   ; AX va servir de scratch pour
+                                                   ; acceder a VAR_SEG
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, BIOS_CURSOR_ROW_OFF
+        mov     dh, [es:di]                      ; DH = ligne
+        mov     di, BIOS_CURSOR_COL_OFF
+        mov     dl, [es:di]                      ; DL = colonne
+        call    bios_cursor_ddram                ; AH = adresse DDRAM (DH/DL consommes)
+
+        mov     al, ah
+        or      al, 80h                          ; AL = commande "Set DDRAM Address"
+
+        cmp     bh, 1
+        je      .dev_lcd
+        cmp     bh, 2
+        je      .dev_i2c
+        jmp     .done                            ; peripherique non reconnu - ignore
+
+.dev_lcd:
+        call    lcd_command                      ; positionne le curseur materiel
+        mov     ax, bp                           ; restaure AL = caractere
+.dev_lcd_loop:
+        call    lcd_data
+        loop    .dev_lcd_loop
+        jmp     .done
+
+.dev_i2c:
+        call    i2c_lcd_command                  ; positionne le curseur materiel
+        mov     ax, bp                           ; restaure AL = caractere
+.dev_i2c_loop:
+        call    i2c_lcd_data
+        loop    .dev_i2c_loop
+
+.done:
+        pop     es
+        pop     bp
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
+        iret
+
+; ============================================================
+; int16h_handler
+; Gestionnaire de INT 16h (clavier), sous-ensemble "esprit BIOS":
+;
+;   AH=01h - Lecture NON BLOQUANTE d'une touche: verifie CLOCK (PB0),
+;            HAUT au repos (voir lib/ps2.asm), avant de lire une
+;            trame en cours - meme technique que l'interruption
+;            Echap de dump_memory_action. Si une touche est
+;            disponible, elle est CONSOMMEE (ce projet, en polling
+;            pur, n'a pas de tampon clavier permettant un "peek" sans
+;            consommer, contrairement au vrai BIOS IBM PC - seule
+;            approximation raisonnable ici).
+;              Sortie: AH = scan code PS/2 Set 2 BRUT (voir
+;                ps2_get_char), AL = caractere ASCII (ou PS2_KEY_*),
+;                ZF=0 si une touche a ete lue. Si aucune touche
+;                n'est disponible: AX=0, ZF=1.
+;            IMPORTANT: le registre FLAGS restitue par IRET est celui
+;            EMPILE PAR L'INSTRUCTION INT (pas l'etat courant du CPU)
+;            - ce gestionnaire doit donc ecraser directement ce mot
+;            sur la pile pour que le ZF ci-dessus soit visible a
+;            l'appelant apres IRET (technique standard, voir
+;            .set_flags plus bas). AX N'EST PAS PRESERVE (c'est la
+;            sortie voulue) - BX/CX/DX/SI/DI/BP/ES le sont.
+;
+; Toute autre valeur de AH est ignoree (IRET immediat, flags et
+; registres inchanges).
+; ============================================================
+int16h_handler:
+        cmp     ah, 01h
+        jne     .passthrough
+
+        push    bx
+        push    cx
+        push    dx
+        push    si
+        push    di
+        push    bp
+        push    es
+
+        in      al, PORTB
+        test    al, PS2_CLOCK
+        jnz     .no_key                          ; CLOCK haut (repos) - rien a lire
+
+        call    ps2_get_char                     ; AL=caractere ASCII (ou PS2_KEY_*),
+                                                   ; BH=scan code PS/2 brut
+        mov     ah, bh                           ; AH = scan code (sortie)
+        or      al, al                           ; ZF=0 (touche lue) - AL non nul
+                                                   ; en pratique pour toute touche geree
+        jmp     .set_flags
+
+.no_key:
+        xor     ax, ax                           ; AX=0
+        or      al, al                           ; ZF=1 explicite
+
+.set_flags:
+        ; --- ecrase le mot FLAGS empile par l'instruction INT (celui
+        ; qu'IRET va restituer) avec les flags courants (le ZF pose
+        ; ci-dessus par "or al,al") - le 8086 ne permet pas [SP+depl]
+        ; directement, d'ou BP, fige AVANT le "pushf" (qui deplace SP
+        ; mais pas BP). [bp+18] = 14 octets deja empiles ci-dessus
+        ; (bx/cx/dx/si/di/bp/es) + 4 (IP+CS empiles par INT avant
+        ; FLAGS) = position du mot FLAGS original. ---
+        mov     bp, sp
+        pushf
+        pop     word [bp+18]
+
+        pop     es
+        pop     bp
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        iret
+
+.passthrough:
+        iret
 
 ; -------------------------------------------------------------------------------------------------
 ; Modules partages (LCD, UART, delay_ms) - voir Directives.md. Ces

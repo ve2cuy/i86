@@ -383,6 +383,58 @@ Activation (mêmes deux façons que `TEST_I2C_DUMP`) :
 nasm -f bin -d TEST_PS2 solution-01.asm -o solution-01.bin
 ```
 
+## Interruptions logicielles type BIOS (`INT 10h` / `INT 16h`)
+
+Sous-ensemble « esprit BIOS » (IBM PC), adapté au matériel réel de ce
+projet (2 LCD HD44780 4×20, pas de mémoire vidéo ni de VGA ; clavier
+PS/2 en polling pur, pas de tampon). `INT n`/`IRET` sont purement
+logiciels sur le 8088 — **aucun 8259 (PIC) requis**, contrairement aux
+interruptions matérielles (IRQ), toujours mises de côté (voir
+Directives.md). L'IVT (segment `0000h`, RAM) est peuplée une seule
+fois au démarrage par `setup_bios_interrupts`, avant toute utilisation.
+
+**`INT 10h` — affichage** (`int10h_handler`) :
+
+| `AH` | Fonction | Registres |
+|---|---|---|
+| `02h` | Positionne le curseur **logique** (persiste en RAM, partagé entre les 2 afficheurs) | `DH`=ligne (0-3), `DL`=colonne (0-19) |
+| `09h` | Écrit `AL` au curseur logique courant, **`CX` fois de suite** (remplit `CX` cellules consécutives — même convention que le vrai BIOS, PAS le même caractère au même endroit) ; le curseur logique **n'est pas déplacé** | `BH`=périphérique (`1`=LCD parallèle, `2`=LCD I2C), `BL`=couleur (**sans effet pour l'instant** — réservée à l'UART, prochaine version), `CX`=répétitions |
+
+Le débordement d'une ligne de 20 suit l'auto-incrémentation DDRAM du
+HD44780 (adressage entrelacé des afficheurs 4 lignes « type A » —
+`LCD_LINE3`/`4` suivent directement `LCD_LINE1`/`2` en mémoire
+interne) : peut déborder sur une **autre** ligne visible, sans
+écrêtage logiciel. Aucune vérification de bornes sur `DH`/`DL` (même
+choix que `Edit RAM`).
+
+**`INT 16h` — clavier** (`int16h_handler`) :
+
+| `AH` | Fonction | Registres |
+|---|---|---|
+| `01h` | Lecture **non bloquante** d'une touche | Sortie : `AH`=scan code PS/2 Set 2 brut, `AL`=caractère ASCII (ou `PS2_KEY_*`), `ZF=0` si une touche a été lue ; `AX=0`/`ZF=1` sinon |
+
+Non bloquant via la même technique que l'interruption Échap de
+`dump_memory_action` : `CLOCK` (`PB0`) est haut au repos, donc un
+simple `IN AL,PORTB` détecte une trame en cours sans bloquer. Si une
+touche est disponible, elle est **consommée** (ce projet n'a pas de
+tampon clavier permettant un « peek » sans consommer, contrairement au
+vrai BIOS IBM PC — seule approximation raisonnable en polling pur).
+Le `ZF` renvoyé par `IRET` est injecté directement dans le mot `FLAGS`
+empilé par `INT` (technique standard pour ce genre de gestionnaire —
+`IRET` restitue les flags *tels qu'empilés par `INT`*, pas l'état
+courant du CPU). `AX` n'est **pas préservé** (c'est la sortie voulue)
+— `BX`/`CX`/`DX`/`SI`/`DI`/`BP`/`ES` le sont.
+
+`ps2_get_char` (`lib/ps2.asm`) expose maintenant aussi `BH` = scan
+code PS/2 Set 2 brut de la touche reconnue, en plus de `AL` — ajouté
+pour `int16h_handler` (aucun appelant existant n'utilisait `BH`, déjà
+« détruit » avant ce changement).
+
+Ces interruptions existent comme **interface disponible en parallèle**
+des appels directs (`lcd_print`, `ps2_get_char`, etc.) — le menu
+interactif continue d'utiliser les appels directs pour l'instant,
+sans changement de comportement.
+
 ## Menu interactif
 
 Affiché après le splash, sur l'UART **et** le LCD parallèle (une

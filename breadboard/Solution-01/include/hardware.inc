@@ -61,4 +61,10 @@ DUMP_LINES_LEFT_OFF equ     0FC0Fh  ; lignes de 16 octets restant a
                                      ; detruit CX, un compteur "loop"
                                      ; classique n'y survivrait pas)
 
+; --- curseur logique de int10h_handler (solution-01.asm), AH=02h/09h
+; --- "esprit BIOS" - partage entre les 2 afficheurs (LCD parallele/
+; --- LCD I2C), voir l'en-tete de int10h_handler ---
+BIOS_CURSOR_ROW_OFF equ     0FC11h  ; ligne courante (0-3)
+BIOS_CURSOR_COL_OFF equ     0FC12h  ; colonne courante (0-19)
+
 %endif ; HARDWARE_INC
