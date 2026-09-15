@@ -431,9 +431,15 @@ pour `int16h_handler` (aucun appelant existant n'utilisait `BH`, déjà
 « détruit » avant ce changement).
 
 Ces interruptions existent comme **interface disponible en parallèle**
-des appels directs (`lcd_print`, `ps2_get_char`, etc.) — le menu
-interactif continue d'utiliser les appels directs pour l'instant,
-sans changement de comportement.
+des appels directs (`lcd_print`, `ps2_get_char`, etc.). Premier
+utilisateur réel : l'**écran de démarrage** (`start:`, LCD parallèle,
+1 seconde) est maintenant affiché via `splash_print_line`, qui appelle
+`INT 10h` caractère par caractère (`AH=02h` pour repositionner, puis
+`AH=09h` — `AH=09h` ne déplaçant pas le curseur logique, `AH=02h` doit
+être répété avant chaque caractère). Le reste du menu interactif
+(dispatch, `Edit RAM`, `Dump memory`, l'écran LCD I2C) continue
+d'utiliser les appels directs pour l'instant, sans changement de
+comportement.
 
 ## Menu interactif
 

@@ -214,16 +214,23 @@ start:
 
         ; --- Ecran de demarrage: affiche une seule fois (pas a chaque
         ; cycle de .ici, contrairement au reste de l'affichage LCD),
-        ; pendant 1 seconde, avant d'entrer dans la boucle principale ---
+        ; pendant 1 seconde, avant d'entrer dans la boucle principale.
+        ; Affiche via INT 10h (AH=02h/09h) plutot que lcd_goto/
+        ; lcd_print directement - premier usage reel de l'interface
+        ; "esprit BIOS" (voir int10h_handler, README.md) ---
         call    lcd_init
         mov     si, lcd_txt_splash_l1
-        lcd_show LCD_LINE1
+        mov     dh, 0
+        call    splash_print_line
         mov     si, lcd_txt_splash_l2
-        lcd_show LCD_LINE2
+        mov     dh, 1
+        call    splash_print_line
         mov     si, lcd_txt_splash_l3
-        lcd_show LCD_LINE3
+        mov     dh, 2
+        call    splash_print_line
         mov     si, lcd_txt_splash_l4
-        lcd_show LCD_LINE4
+        mov     dh, 3
+        call    splash_print_line
         delay_ms (1*SECONDE)
 
         ; --- Bandeau d'identification: affiche une seule fois, avant
@@ -1924,6 +1931,48 @@ int16h_handler:
 
 .passthrough:
         iret
+
+; ============================================================
+; splash_print_line
+; Affiche UNE ligne (jusqu'a 20 caracteres, terminee par 0) via
+; INT 10h (AH=02h puis AH=09h caractere par caractere) plutot que
+; lcd_goto/lcd_print directement - utilisee par l'ecran de demarrage
+; (voir start:) pour exercer l'interface "esprit BIOS" (voir
+; int10h_handler). AH=09h n'avance pas le curseur logique (meme
+; convention que le vrai BIOS) - AH=02h doit donc repositionner
+; explicitement avant CHAQUE caractere. Cible le LCD PARALLELE
+; uniquement (BH=1).
+;
+; Repose sur le fait qu'int10h_handler preserve integralement AX pour
+; AH=02h/09h (aucune sortie documentee dans AX pour ces 2 fonctions -
+; voir son en-tete): AL survit donc a l'appel AH=02h ci-dessous sans
+; sauvegarde explicite.
+;
+; Entree:  DH = ligne (0-3), DS:SI = texte termine par 0
+; Detruit: AX, BX, CX, SI. DX est preserve (DL sert de compteur de
+; colonne en interne, restaure avant le retour).
+; ============================================================
+splash_print_line:
+        push    dx
+        mov     dl, 0                    ; DL = colonne courante
+.next_char:
+        mov     al, [si]
+        cmp     al, 0
+        je      .done
+        mov     ah, 02h
+        int     10h                      ; positionne (DH,DL) - AX preserve, AL
+                                          ; contient toujours le caractere apres
+        mov     ah, 09h
+        mov     bh, 1                    ; 1 = LCD parallele
+        mov     bl, 0                    ; couleur: N/A
+        mov     cx, 1                    ; un seul caractere
+        int     10h                      ; ecrit AL a (DH,DL)
+        inc     si
+        inc     dl
+        jmp     .next_char
+.done:
+        pop     dx
+        ret
 
 ; -------------------------------------------------------------------------------------------------
 ; Modules partages (LCD, UART, delay_ms) - voir Directives.md. Ces
