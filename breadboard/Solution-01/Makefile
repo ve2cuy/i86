@@ -44,7 +44,7 @@ rom: $(ROM_BIN)
 	cp $(ROM_BIN) "$(ROM_OUT)"
 	@echo "ROM copiee vers $(ROM_OUT)"
 
-$(ROM_BIN): solution-01.asm include/hardware.inc include/delay.inc \
+$(ROM_BIN): solution-01.asm include/hardware.inc include/delay.inc include/lcd_macros.inc \
             lib/common.asm lib/lcd.asm lib/uart.asm lib/utils.asm lib/lcd_i2c.asm
 	$(NASM) $(NASMFLAGS) solution-01.asm -o $(ROM_BIN)
 

@@ -91,8 +91,35 @@ SECONDE         equ     1000            ; 1 seconde = 1000 ms
         call    uart_tx_string
 %endmacro
 
+; --- ascii_or_dot: remplace AL par '.' s'il n'est pas imprimable
+; --- (< 20h ou > 7Eh) - motif utilise par le dump ASCII UART
+; --- (dump_line) ET le dump ASCII du LCD I2C (i2c_dump_hex_ascii8_line,
+; --- TEST_I2C_DUMP), auparavant duplique dans les 2 routines. ---
+%macro ascii_or_dot 0
+        cmp     al, 20h
+        jb      %%not_printable
+        cmp     al, 7Eh
+        ja      %%not_printable
+        jmp     %%print_char
+%%not_printable:
+        mov     al, '.'
+%%print_char:
+%endmacro
+
+; --- lcd_text: definit un texte LCD complete a une largeur fixe par
+; --- des espaces, puis termine par 0 - motif utilise ~15 fois dans
+; --- la section donnees ci-dessous (textes des 4 lignes du LCD 4x20).
+; --- %1=etiquette, %2='texte' (chaine, eventuellement vide ''),
+; --- %3=largeur visible (SANS compter le terminateur 0 ajoute apres). ---
+%macro lcd_text 3
+%1:             db      %2
+                times   %3-($-%1) db ' '
+                db      0
+%endmacro
+
 %include "include/hardware.inc"
 %include "include/delay.inc"
+%include "include/lcd_macros.inc"
 
 start:
         cli                     ; pas d'interruption pendant l'init de SS:SP
@@ -139,13 +166,13 @@ start:
         ; pendant 3 secondes, avant d'entrer dans la boucle principale ---
         call    lcd_init
         mov     si, lcd_txt_splash_l1
-        call    lcd_show_line1
+        lcd_show LCD_LINE1
         mov     si, lcd_txt_splash_l2
-        call    lcd_show_line2
+        lcd_show LCD_LINE2
         mov     si, lcd_txt_splash_l3
-        call    lcd_show_line3
+        lcd_show LCD_LINE3
         mov     si, lcd_txt_splash_l4
-        call    lcd_show_line4
+        lcd_show LCD_LINE4
         delay_ms (3*SECONDE)
 
 .ici:
@@ -162,27 +189,27 @@ start:
 
         ; --- Etape 1: test du 8255 (animation sur le Port C) ---
         mov     si, lcd_txt_step1_l1
-        call    lcd_show_line1
+        lcd_show LCD_LINE1
         mov     si, lcd_txt_step1_l2
-        call    lcd_show_line2
+        lcd_show LCD_LINE2
         mov     si, lcd_txt_step1_l4   ; texte fixe (ligne 3 = progression
-        call    lcd_show_line4         ; live, mise a jour par effet1)
+        lcd_show LCD_LINE4             ; live, mise a jour par effet1)
         call    effet1
 ;        jmp     .temp
 
         ; --- Etape 2: test de la RAM (ligne 2 mise a jour a chaque bloc) ---
         mov     si, lcd_txt_step2_l1
-        call    lcd_show_line1
+        lcd_show LCD_LINE1
         mov     si, lcd_txt_step2_l2
-        call    lcd_show_line2
+        lcd_show LCD_LINE2
 
         call    test_ram        ; teste toute la RAM (128K) et rapporte via UART+LCD
 
         ; --- Etape 3: dump de la ROM ---
         mov     si, lcd_txt_step3_l1
-        call    lcd_show_line1
+        lcd_show LCD_LINE1
         mov     si, lcd_txt_step3_l2
-        call    lcd_show_line2
+        lcd_show LCD_LINE2
 
         call    rom_dump        ; dump des 16 premiers Ko de la ROM - voir plus bas
 
@@ -390,7 +417,7 @@ rom_dump:
 dump_line:
         ; --- LCD: adresse de cette ligne (avant de l'envoyer sur l'UART,
         ; pour que le LCD annonce le bloc au moment ou il part) ---
-        call    lcd_line2
+        lcd_goto LCD_LINE2
         mov     ax, es
         call    lcd_tx_hex_word
         mov     al, ':'
@@ -402,7 +429,7 @@ dump_line:
 
         ; --- Ligne 3 du LCD: apercu des 7 premiers octets en hexa
         ; (7*2 chiffres + 6 espaces = 20 caracteres exactement) ---
-        call    lcd_line3
+        lcd_goto LCD_LINE3
         push    di              ; DI va temporairement avancer pour la lecture -
                                  ; restaure avant de continuer (l'appelant, et le
                                  ; bloc UART plus bas, ont besoin de la valeur
@@ -422,7 +449,7 @@ dump_line:
 
         ; --- Ligne 4 du LCD: numero de cette ligne / 257 (BX prepare
         ; par rom_dump) ---
-        call    lcd_line4
+        lcd_goto LCD_LINE4
         mov     si, lcd_txt_ligne_prefix
         call    lcd_print
         mov     ax, bx
@@ -437,13 +464,13 @@ dump_line:
         ; ASCII (8 caracteres/groupe de 8 octets) affiche seulement
         ; sur les lignes 1 et 3 - voir i2c_dump_hex_ascii8_line ---
         push    di
-        call    i2c_lcd_line1
+        i2c_lcd_goto LCD_LINE1
         call    i2c_dump_hex_ascii8_line       ; hexa bytes[0:4] + ascii bytes[0:8]
-        call    i2c_lcd_line2
+        i2c_lcd_goto LCD_LINE2
         call    i2c_dump_hex_only_line         ; hexa bytes[4:8] seulement
-        call    i2c_lcd_line3
+        i2c_lcd_goto LCD_LINE3
         call    i2c_dump_hex_ascii8_line       ; hexa bytes[8:12] + ascii bytes[8:16]
-        call    i2c_lcd_line4
+        i2c_lcd_goto LCD_LINE4
         call    i2c_dump_hex_only_line         ; hexa bytes[12:16] seulement
         pop     di
 %endif
@@ -479,14 +506,7 @@ dump_line:
         mov     cx, 16
 .ascii_loop:
         mov     al, [es:di]
-        cmp     al, 20h         ; < espace -> non imprimable
-        jb      .not_printable
-        cmp     al, 7Eh         ; > '~' -> non imprimable
-        ja      .not_printable
-        jmp     .print_char
-.not_printable:
-        mov     al, '.'
-.print_char:
+        ascii_or_dot
         call    uart_tx_byte
         inc     di
         loop    .ascii_loop
@@ -496,6 +516,24 @@ dump_line:
         ret
 
 %ifdef TEST_I2C_DUMP
+; --- i2c_dump_hex4: affiche les 4 octets ES:DI en hexadecimal
+; --- (separes par un espace) sur le LCD I2C, avance DI de 4 -
+; --- factorise entre i2c_dump_hex_only_line et
+; --- i2c_dump_hex_ascii8_line ci-dessous, qui partageaient ce code. ---
+%macro i2c_dump_hex4 0
+        mov     cx, 4
+%%loop:
+        mov     al, [es:di]
+        call    i2c_lcd_tx_hex_byte
+        cmp     cx, 1
+        je      %%last
+        mov     al, ' '
+        call    i2c_lcd_data
+%%last:
+        inc     di
+        loop    %%loop
+%endmacro
+
 ; ============================================================
 ; i2c_dump_hex_only_line (TEST_I2C_DUMP uniquement)
 ; Affiche 4 octets en hexadecimal (separes par un espace), SANS
@@ -509,17 +547,7 @@ dump_line:
 i2c_dump_hex_only_line:
         push    ax
         push    cx
-        mov     cx, 4
-.loop:
-        mov     al, [es:di]
-        call    i2c_lcd_tx_hex_byte
-        cmp     cx, 1
-        je      .last
-        mov     al, ' '
-        call    i2c_lcd_data
-.last:
-        inc     di
-        loop    .loop
+        i2c_dump_hex4
         pop     cx
         pop     ax
         ret
@@ -549,17 +577,7 @@ i2c_dump_hex_ascii8_line:
                                  ; octets ASCII: ce groupe + le suivant) -
                                  ; DI, lui, doit finir avance de 4 seulement
                                  ; (contrat de sortie, utilise par dump_line)
-        mov     cx, 4
-.hex_loop:
-        mov     al, [es:di]
-        call    i2c_lcd_tx_hex_byte
-        cmp     cx, 1
-        je      .hex_last
-        mov     al, ' '
-        call    i2c_lcd_data
-.hex_last:
-        inc     di
-        loop    .hex_loop
+        i2c_dump_hex4
 
         mov     al, ' '                 ; separateur entre hexa et ascii
         call    i2c_lcd_data
@@ -567,14 +585,7 @@ i2c_dump_hex_ascii8_line:
         mov     cx, 8
 .ascii_loop:
         mov     al, [es:si]
-        cmp     al, 20h         ; < espace -> non imprimable
-        jb      .not_printable
-        cmp     al, 7Eh         ; > '~' -> non imprimable
-        ja      .not_printable
-        jmp     .print_char
-.not_printable:
-        mov     al, '.'
-.print_char:
+        ascii_or_dot
         call    i2c_lcd_data
         inc     si
         loop    .ascii_loop
@@ -673,7 +684,7 @@ msg_bloc_progression:
         ; --- Ligne 2 du LCD: plage complete du bloc "SSSS:OOOO-SSSS:OOOO",
         ; miroir exact de ce qui part sur l'UART (19 caracteres - avant,
         ; sur 16 colonnes, seule l'adresse de DEBUT tenait) ---
-        call    lcd_line2
+        lcd_goto LCD_LINE2
 
         mov     ax, es
         call    lcd_tx_hex_word
@@ -695,7 +706,7 @@ msg_bloc_progression:
         call    lcd_tx_hex_word
 
         ; --- Ligne 3 du LCD: etat en toutes lettres ---
-        call    lcd_line3
+        lcd_goto LCD_LINE3
         cmp     bp, 0
         je      .lcd_ok
         mov     si, lcd_txt_etat_defaut
@@ -720,7 +731,7 @@ msg_bloc_progression:
         pop     di
         pop     es
 
-        call    lcd_line4
+        lcd_goto LCD_LINE4
         mov     si, lcd_txt_bloc_prefix
         call    lcd_print
         mov     al, dl
@@ -857,7 +868,7 @@ effet1:
         ; modifie, et les routines LCD le preservent de toute facon
         ; (meme discipline que porta_write/uart_tx_byte). ---
         push    ax
-        call    lcd_line3
+        lcd_goto LCD_LINE3
         mov     si, lcd_txt_passe_prefix
         call    lcd_print
         mov     ax, 17
@@ -962,56 +973,30 @@ i2c_txt_hello:          db      'Hello World', 0
 ; ---- espaces via "times" - afficheur 4x20) ----
 
 ; ---- ecran de demarrage (3 secondes, une seule fois - voir start:) ----
-lcd_txt_splash_l1:      db      'Breadboard 8088'
-                        times   20-($-lcd_txt_splash_l1) db ' '
+lcd_text lcd_txt_splash_l1, 'Breadboard 8088', 20
+lcd_text lcd_txt_splash_l2, 'Version 1.0', 20
+lcd_txt_splash_l3:      times   20 db '-'       ; remplissage '-' (pas ' ') - hors macro
                         db      0
-lcd_txt_splash_l2:      db      'Version 1.0'
-                        times   20-($-lcd_txt_splash_l2) db ' '
-                        db      0
-lcd_txt_splash_l3:      times   20 db '-'
-                        db      0
-lcd_txt_splash_l4:      db      '(c) VE2CUY 2026'
-                        times   20-($-lcd_txt_splash_l4) db ' '
-                        db      0
+lcd_text lcd_txt_splash_l4, '(c) VE2CUY 2026', 20
 
-lcd_txt_step1_l1:       db      '1/3 - Test 8255'
-                        times   20-($-lcd_txt_step1_l1) db ' '
-                        db      0
-lcd_txt_step1_l2:       db      'Chenillard Port C'
-                        times   20-($-lcd_txt_step1_l2) db ' '
-                        db      0
-lcd_txt_step1_l4:       db      'VE2CUY 2026'
-                        times   20-($-lcd_txt_step1_l4) db ' '
-                        db      0
+lcd_text lcd_txt_step1_l1, '1/3 - Test 8255', 20
+lcd_text lcd_txt_step1_l2, 'Chenillard Port C', 20
+lcd_text lcd_txt_step1_l4, 'VE2CUY 2026', 20
 
-lcd_txt_step2_l1:       db      '2/3 - Test RAM 128K'
-                        times   20-($-lcd_txt_step2_l1) db ' '
-                        db      0
-lcd_txt_step2_l2:       db      'En attente...'
-                        times   20-($-lcd_txt_step2_l2) db ' '
-                        db      0
+lcd_text lcd_txt_step2_l1, '2/3 - Test RAM 128K', 20
+lcd_text lcd_txt_step2_l2, 'En attente...', 20
 
-lcd_txt_step3_l1:       db      '3/3 - Dump ROM'
-                        times   20-($-lcd_txt_step3_l1) db ' '
-                        db      0
-lcd_txt_step3_l2:       db      'Dump 4K+16 octets'
-                        times   20-($-lcd_txt_step3_l2) db ' '
-                        db      0
+lcd_text lcd_txt_step3_l1, '3/3 - Dump ROM', 20
+lcd_text lcd_txt_step3_l2, 'Dump 4K+16 octets', 20
 
 ; ---- complement de 11 espaces utilise par dump_line, apres les 9
 ; ---- caracteres d'adresse "SSSS:OOOO" (9+11=20) ----
-lcd_txt_dump_pad:
-                        times   11 db ' '
-                        db      0
+lcd_text lcd_txt_dump_pad, '', 11
 
 ; ---- ligne 3 de l'etape 2 (msg_bloc_progression): etat en toutes
 ; ---- lettres, 20 caracteres ----
-lcd_txt_etat_ok:        db      'Etat: OK'
-                        times   20-($-lcd_txt_etat_ok) db ' '
-                        db      0
-lcd_txt_etat_defaut:    db      'Etat: DEFAUT'
-                        times   20-($-lcd_txt_etat_defaut) db ' '
-                        db      0
+lcd_text lcd_txt_etat_ok, 'Etat: OK', 20
+lcd_text lcd_txt_etat_defaut, 'Etat: DEFAUT', 20
 
 ; ---- ligne 4 de l'etape 2: "Bloc:" + dec3 + "/127 Def:" + dec3 =
 ; ---- 5+3+9+3 = 20 caracteres EXACTEMENT (pas de padding requis) ----
@@ -1021,16 +1006,12 @@ lcd_txt_bloc_mid:       db      '/127 Def:', 0
 ; ---- ligne 3 de l'etape 1 (effet1): "Passe: " + dec3 + "/16" +
 ; ---- 7 espaces = 7+3+10 = 20 caracteres ----
 lcd_txt_passe_prefix:   db      'Passe: ', 0
-lcd_txt_passe_suffix:   db      '/16'
-                        times   10-($-lcd_txt_passe_suffix) db ' '
-                        db      0
+lcd_text lcd_txt_passe_suffix, '/16', 10
 
 ; ---- ligne 4 de l'etape 3 (dump_line): "Ligne: " + dec3 + "/257" +
 ; ---- 6 espaces = 7+3+10 = 20 caracteres ----
 lcd_txt_ligne_prefix:   db      'Ligne: ', 0
-lcd_txt_ligne_suffix:   db      '/257'
-                        times   10-($-lcd_txt_ligne_suffix) db ' '
-                        db      0
+lcd_text lcd_txt_ligne_suffix, '/257', 10
 
 ; ---- remplissage jusqu'au vecteur de reset            ----
 ; ---- calcul en fonction de la taille de la ROM (256K) ----

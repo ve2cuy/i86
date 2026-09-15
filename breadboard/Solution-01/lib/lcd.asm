@@ -146,6 +146,11 @@ lcd_strobe:
 ; lcd_print
 ; Affiche une chaine terminee par 00h (PAS de padding - le
 ; texte doit deja avoir la largeur voulue). Entree: DS:SI.
+;
+; Positionnement DDRAM (lcd_line1..4/lcd_show_line1..4 d'origine):
+; voir les macros lcd_goto/lcd_show dans include/lcd_macros.inc,
+; inclus tot dans solution-01.asm (avant start:, contrainte du
+; vecteur de reset - voir la note dans ce fichier).
 ; ============================================================
 lcd_print:
         push    ax
@@ -163,99 +168,14 @@ lcd_print:
         ret
 
 ; ============================================================
-; lcd_line1 / lcd_line2 / lcd_line3 / lcd_line4
-; Positionnement DDRAM pour un afficheur 4x20: la ligne 3 est en
-; fait la suite de la ligne 1 en memoire interne (00h puis 14h), et
-; la ligne 4 la suite de la ligne 2 (40h puis 54h) - convention
-; standard ("type A") des afficheurs 20x4 bases sur le HD44780.
-; ============================================================
-lcd_line1:
-        push    ax
-        mov     al, 10000000b   ; Set DDRAM Address = 80h | 00h
-        call    lcd_command
-        pop     ax
-        ret
-
-lcd_line2:
-        push    ax
-        mov     al, 11000000b   ; Set DDRAM Address = 80h | 40h
-        call    lcd_command
-        pop     ax
-        ret
-
-lcd_line3:
-        push    ax
-        mov     al, 10010100b   ; Set DDRAM Address = 80h | 14h
-        call    lcd_command
-        pop     ax
-        ret
-
-lcd_line4:
-        push    ax
-        mov     al, 11010100b   ; Set DDRAM Address = 80h | 54h
-        call    lcd_command
-        pop     ax
-        ret
-
-; ============================================================
-; lcd_show_line1 / lcd_show_line2 / lcd_show_line3 / lcd_show_line4
-; ============================================================
-lcd_show_line1:
-        call    lcd_line1
-        call    lcd_print
-        ret
-
-lcd_show_line2:
-        call    lcd_line2
-        call    lcd_print
-        ret
-
-lcd_show_line3:
-        call    lcd_line3
-        call    lcd_print
-        ret
-
-lcd_show_line4:
-        call    lcd_line4
-        call    lcd_print
-        ret
-
-; ============================================================
 ; lcd_tx_hex_nibble / lcd_tx_hex_byte / lcd_tx_hex_word
+; Generees par def_tx_hex_nibble/byte/word (lib/common.asm) - voir
+; ce fichier pour la logique partagee avec uart_tx_hex_* et
+; i2c_lcd_tx_hex_*.
 ; ============================================================
-lcd_tx_hex_nibble:
-        push    bx
-        and     al, 0Fh
-        mov     bl, al
-        xor     bh, bh
-        mov     al, [hex_table + bx]
-        call    lcd_data
-        pop     bx
-        ret
-
-lcd_tx_hex_byte:
-        push    bx
-        mov     bl, al
-        mov     al, bl
-        shr     al, 1
-        shr     al, 1
-        shr     al, 1
-        shr     al, 1
-        call    lcd_tx_hex_nibble
-        mov     al, bl
-        call    lcd_tx_hex_nibble
-        pop     bx
-        ret
-
-lcd_tx_hex_word:
-        push    bx
-        mov     bx, ax
-        mov     al, bh
-        call    lcd_tx_hex_byte
-        mov     al, bl
-        call    lcd_tx_hex_byte
-        pop     bx
-        ret
+def_tx_hex_nibble lcd_tx_hex_nibble, lcd_data
+def_tx_hex_byte   lcd_tx_hex_byte,   lcd_tx_hex_nibble
+def_tx_hex_word   lcd_tx_hex_word,   lcd_tx_hex_byte
 
 ; ============================================================
 ; lcd_tx_dec3
@@ -301,7 +221,9 @@ lcd_tx_dec3:
 ; Delais LCD
 ; Calibration: meme motif d'instruction (dec bx / jnz) que
 ; delay_ms_proc (voir lib/utils.asm, INNER_MS=265 pour ~1ms a
-; 4,77 MHz) -> 1 iteration ~ 1000/265 ~ 3,77 us.
+; 4,77 MHz) -> 1 iteration ~ 1000/265 ~ 3,77 us. Generees par
+; def_busy_delay (lib/common.asm) - meme motif que i2c_delay
+; (lib/lcd_i2c.asm) et uart_bit_delay (lib/uart.asm).
 ;
 ; Valeurs resserrees au plus proche du minimum requis par le
 ; HD44780 (datasheet, fOSC=270kHz), avec une legere marge de
@@ -311,32 +233,9 @@ lcd_tx_dec3:
 ; devient instable sur le materiel reel, augmenter la marge la
 ; plus serree en premier (lcd_delay, ~1,75x).
 ; ============================================================
-lcd_short_delai:        ; impulsion E (>=450ns) / cycle E (>=1us) - ~7,5us (~7-16x le minimum)
-        push    bx
-        mov     bx, 0002h
-.d:
-        dec     bx
-        jnz     .d
-        pop     bx
-        ret
-
-lcd_delay:               ; execution normale d'une commande/donnee (37-43us typique) - ~75us (~1,75x)
-        push    bx
-        mov     bx, 0014h
-.d:
-        dec     bx
-        jnz     .d
-        pop     bx
-        ret
-
-lcd_delay_long:          ; Clear/Home (>=1,52ms) et etapes du reveil 4 bits (>=4,1ms, la plus contraignante) - ~5,8ms (~1,4x)
-        push    bx
-        mov     bx, 0600h
-.d:
-        dec     bx
-        jnz     .d
-        pop     bx
-        ret
+def_busy_delay lcd_short_delai, 0002h  ; impulsion E (>=450ns) / cycle E (>=1us) - ~7,5us (~7-16x le minimum)
+def_busy_delay lcd_delay,       0014h  ; execution normale d'une commande/donnee (37-43us typique) - ~75us (~1,75x)
+def_busy_delay lcd_delay_long,  0600h  ; Clear/Home (>=1,52ms) et etapes du reveil 4 bits (>=4,1ms, la plus contraignante) - ~5,8ms (~1,4x)
 
 lcd_powerup_delay:       ; >= 15-40ms apres mise sous tension - ~35ms (6x lcd_delay_long, ~2,3x le minimum de 15ms)
         push    cx

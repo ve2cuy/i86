@@ -135,7 +135,9 @@ Solution-01/
 ├── include/
 │   ├── hardware.inc       Constantes matérielles (8255, adresses RAM
 │   │                      des variables partagées)
-│   └── delay.inc          Macro `delay_ms` (voir lib/utils.asm)
+│   ├── delay.inc          Macro `delay_ms` (voir lib/utils.asm)
+│   └── lcd_macros.inc     Macros `lcd_goto`/`lcd_show`/`i2c_lcd_goto`/
+│                          `i2c_lcd_show` (voir plus bas)
 └── lib/
     ├── common.asm         porta_write (accès partagé LCD/UART/LCD-I2C
     │                      au Port A) + hex_table
@@ -165,9 +167,10 @@ un sous-dossier.
 | `lcd_command` / `lcd_data` | Envoie un octet complet (2 quartets) : `lcd_command` = instruction (RS=0), `lcd_data` = caractère (RS=1). Entrée : `AL` |
 | `lcd_strobe` | Envoie un quartet déjà prêt et génère l'impulsion `E` (via `porta_write`, jamais un `out` direct — préserve le bit UART) |
 | `lcd_print` | Affiche une chaîne terminée par `0` depuis `DS:SI` (pas de padding — le texte doit déjà avoir la largeur voulue) |
-| `lcd_line1` … `lcd_line4` | Positionne le curseur DDRAM au début d'une des 4 lignes (convention "type A" pour afficheur 20×4) |
-| `lcd_show_line1` … `lcd_show_line4` | `lcd_lineN` + `lcd_print` en un seul appel (entrée : `DS:SI`) |
-| `lcd_tx_hex_nibble` / `lcd_tx_hex_byte` / `lcd_tx_hex_word` | Affiche une valeur en hexadécimal majuscule (entrée : `AL` ou `AX`) |
+| `lcd_tx_hex_nibble` / `lcd_tx_hex_byte` / `lcd_tx_hex_word` | Affiche une valeur en hexadécimal majuscule (entrée : `AL` ou `AX`) — générées par `def_tx_hex_nibble`/`byte`/`word` (voir [Macros de refactoring](#macros-de-refactoring)) |
+
+Positionnement DDRAM (anciennement `lcd_line1..4`/`lcd_show_line1..4`) :
+voir les macros `lcd_goto`/`lcd_show` ci-dessous.
 | `lcd_tx_dec3` | Affiche `AX` (0-999) en décimal, toujours sur 3 chiffres avec zéros de tête |
 | `lcd_short_delai` / `lcd_delay` / `lcd_delay_long` / `lcd_powerup_delay` | Délais calibrés au plus proche du minimum HD44780 (voir en-tête du fichier pour les marges de sécurité de chacun) |
 
@@ -179,8 +182,8 @@ Transmission série logicielle (bit-bang, 9600 8N1) sur `PA7`.
 |---|---|
 | `uart_tx_string` | Transmet une chaîne terminée par `0` depuis `DS:SI` |
 | `uart_tx_byte` | Transmet `AL` en 8N1 (bit start, 8 bits LSB en premier, bit stop) via `porta_write` |
-| `uart_bit_delay` | Délai d'un bit, calibré (`UART_BIT_COUNT`) pour ~9600 bauds — **valeur mesurée à l'analyseur logique sur ce montage, ne pas modifier sans re-mesurer** |
-| `uart_tx_hex_nibble` / `uart_tx_hex_byte` / `uart_tx_hex_word` | Affiche une valeur en hexadécimal majuscule (entrée : `AL` ou `AX`) |
+| `uart_bit_delay` | Délai d'un bit, calibré (`UART_BIT_COUNT`) pour ~9600 bauds — **valeur mesurée à l'analyseur logique sur ce montage, ne pas modifier sans re-mesurer** — généré par `def_busy_delay` |
+| `uart_tx_hex_nibble` / `uart_tx_hex_byte` / `uart_tx_hex_word` | Affiche une valeur en hexadécimal majuscule (entrée : `AL` ou `AX`) — généré par `def_tx_hex_nibble`/`byte`/`word` |
 
 ## Fonctions d'accès au LCD I2C (`lib/lcd_i2c.asm`)
 
@@ -205,12 +208,14 @@ open-drain), cette implémentation **n'accuse jamais réception (ACK)**
 | `i2c_lcd_send_byte` | Envoie 2 quartets × 3 états `EN` en **une seule transaction I2C** (1 START + adresse + 6 octets de données + 1 STOP) |
 | `i2c_lcd_strobe` | Envoie un quartet + `RS` avec l'impulsion `EN`, en une seule transaction I2C (1 START + adresse + 3 octets + STOP) |
 | `i2c_lcd_print` | Affiche une chaîne terminée par `0` depuis `DS:SI` |
-| `i2c_lcd_line1` … `i2c_lcd_line4` | Positionne le curseur DDRAM au début d'une des 4 lignes (mêmes adresses que `lcd_line1..4`) |
-| `i2c_lcd_show_line1` … `i2c_lcd_show_line4` | `i2c_lcd_lineN` + `i2c_lcd_print` en un seul appel (entrée : `DS:SI`) |
-| `i2c_lcd_tx_hex_nibble` / `i2c_lcd_tx_hex_byte` | Affiche une valeur en hexadécimal majuscule (entrée : `AL`) |
+| `i2c_lcd_tx_hex_nibble` / `i2c_lcd_tx_hex_byte` | Affiche une valeur en hexadécimal majuscule (entrée : `AL`) — généré par `def_tx_hex_nibble`/`byte` |
 | `i2c_write_byte` | Transmet un octet (8 bits, MSB en premier) sur le bus I2C |
 | `i2c_start` / `i2c_stop` | Conditions START/STOP du protocole I2C |
-| `i2c_delay` | Demi-période SCL (~3,77 µs → ~88,5 kHz, sous le maximum 100 kHz du mode I2C "standard", marge ~13%) |
+| `i2c_delay` | Demi-période SCL (~3,77 µs → ~88,5 kHz, sous le maximum 100 kHz du mode I2C "standard", marge ~13%) — généré par `def_busy_delay` |
+
+Positionnement DDRAM (anciennement `i2c_lcd_line1..4`/`i2c_lcd_show_line1..4`,
+mêmes adresses que le LCD parallèle) : voir les macros `i2c_lcd_goto`/
+`i2c_lcd_show` ci-dessous.
 
 ⚡ **Optimisations** (quatre passes, voir Directives.md pour l'historique) :
 1. Les écritures PCF8574 (états `EN=0/1/0` par quartet) sont regroupées dans
@@ -249,6 +254,37 @@ open-drain), cette implémentation **n'accuse jamais réception (ACK)**
 Réutilise `lcd_delay` / `lcd_delay_long` / `lcd_powerup_delay` de
 `lib/lcd.asm` pour les temps d'exécution propres au HD44780 (mêmes
 exigences, peu importe le transport parallèle ou I2C).
+
+## Macros de refactoring
+
+Plusieurs familles de procédures quasi identiques (LCD parallèle, LCD
+I2C, UART) ont été remplacées par des macros NASM — même comportement,
+code source bien plus compact. Aucun changement fonctionnel : les
+octets assemblés sont identiques pour les générateurs (`def_tx_hex_*`,
+`def_busy_delay`, `lcd_text`) et légèrement plus nombreux mais
+équivalents pour les macros inline (`lcd_goto`/`lcd_show`,
+`ascii_or_dot`), qui remplacent un `call` vers une procédure partagée
+par du code répété à chaque site d'appel.
+
+| Macro | Fichier | Remplace | Rôle |
+|---|---|---|---|
+| `lcd_goto LCD_LINEn` | `include/lcd_macros.inc` | `call lcd_line1`…`lcd_line4` | Positionne le curseur DDRAM (LCD parallèle) |
+| `lcd_show LCD_LINEn` | `include/lcd_macros.inc` | `call lcd_show_line1`…`lcd_show_line4` | `lcd_goto` + `lcd_print` (entrée : `DS:SI`) |
+| `i2c_lcd_goto LCD_LINEn` | `include/lcd_macros.inc` | `call i2c_lcd_line1`…`i2c_lcd_line4` | Positionne le curseur DDRAM (LCD I2C) |
+| `i2c_lcd_show LCD_LINEn` | `include/lcd_macros.inc` | `call i2c_lcd_show_line1`…`i2c_lcd_show_line4` | `i2c_lcd_goto` + `i2c_lcd_print` |
+| `def_tx_hex_nibble`/`byte`/`word` `nom, proc_emission` | `lib/common.asm` | 8 procédures dupliquées (LCD/UART/LCD-I2C) | **Génère** une procédure d'affichage hexadécimal appelant `proc_emission` pour chaque caractère |
+| `def_busy_delay nom, N` | `lib/common.asm` | 5 procédures dupliquées (`lcd_short_delai`, `lcd_delay`, `lcd_delay_long`, `i2c_delay`, `uart_bit_delay`) | **Génère** une boucle d'attente active (`dec bx`/`jnz`) de `N` itérations |
+| `lcd_text label, 'texte', largeur` | `solution-01.asm` | ~15 blocs `db`+`times`+`db 0` dupliqués | **Génère** un texte LCD complété par des espaces à `largeur` colonnes, terminé par `0` |
+| `ascii_or_dot` | `solution-01.asm` | Logique dupliquée dans le dump UART et `i2c_dump_hex_ascii8_line` | Remplace `AL` par `.` s'il n'est pas imprimable (`< 20h` ou `> 7Eh`) |
+| `i2c_dump_hex4` (`TEST_I2C_DUMP`) | `solution-01.asm` | Boucle hexa dupliquée entre `i2c_dump_hex_only_line` et `i2c_dump_hex_ascii8_line` | Affiche 4 octets hexa (`ES:DI`), avance `DI` de 4 |
+
+`lcd_goto`/`lcd_show`/`i2c_lcd_goto`/`i2c_lcd_show` sont incluses **avant**
+`start:` (`include/lcd_macros.inc`, comme `delay.inc`, n'émet aucun octet)
+— contrairement à un `call`, une invocation de macro doit être
+textuellement définie avant son premier usage, alors que les procédures
+réelles (`lcd_command`, `i2c_lcd_print`, …) restent définies dans
+`lib/lcd.asm`/`lib/lcd_i2c.asm`, inclus après tout le code (voir la
+note dans `solution-01.asm` sur le vecteur de reset).
 
 ### Test de performance conditionnel (`TEST_I2C_DUMP`)
 

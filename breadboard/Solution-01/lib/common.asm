@@ -68,4 +68,83 @@ porta_write:
 ; --- table de conversion hexadecimale (partagee LCD/UART) -------------
 hex_table:              db      '0123456789ABCDEF'
 
+; ============================================================
+; def_tx_hex_nibble / def_tx_hex_byte / def_tx_hex_word
+; Generateurs de procedures d'affichage hexadecimal (majuscules, via
+; hex_table ci-dessus). La MEME logique etait auparavant dupliquee 3
+; fois (LCD parallele, UART, LCD I2C), ne differant que par la
+; procedure appelee pour emettre une unite (caractere pour nibble,
+; nibble-proc pour byte, byte-proc pour word). Chaque macro GENERE
+; une procedure complete (label + code + ret).
+;
+; Usage (voir lib/lcd.asm, lib/uart.asm, lib/lcd_i2c.asm):
+;   def_tx_hex_nibble lcd_tx_hex_nibble, lcd_data
+;   def_tx_hex_byte   lcd_tx_hex_byte,   lcd_tx_hex_nibble
+;   def_tx_hex_word   lcd_tx_hex_word,   lcd_tx_hex_byte
+;
+; %1 = nom de la procedure a definir. %2 = procedure a appeler pour
+; chaque unite.
+; ============================================================
+%macro def_tx_hex_nibble 2
+%1:
+        ; Entree: AL (4 bits utiles) = valeur 0-15 a afficher
+        push    bx
+        and     al, 0Fh
+        mov     bl, al
+        xor     bh, bh
+        mov     al, [hex_table + bx]
+        call    %2
+        pop     bx
+        ret
+%endmacro
+
+%macro def_tx_hex_byte 2
+%1:
+        ; Entree: AL = octet a afficher (2 caracteres hex)
+        push    bx
+        mov     bl, al          ; BL = copie de l'octet
+        mov     al, bl
+        shr     al, 1           ; 4x SHR reg,1: seul decalage disponible
+        shr     al, 1           ; sur un vrai 8086/8088 (immediat != 1
+        shr     al, 1           ; interdit avant le 80186)
+        shr     al, 1           ; AL = nibble de poids fort
+        call    %2
+        mov     al, bl          ; AL = octet original (nibble de poids
+        call    %2              ; faible - le AND est fait dans nibble)
+        pop     bx
+        ret
+%endmacro
+
+%macro def_tx_hex_word 2
+%1:
+        ; Entree: AX = mot a afficher (4 caracteres hex, octet fort en 1er)
+        push    bx
+        mov     bx, ax
+        mov     al, bh
+        call    %2
+        mov     al, bl
+        call    %2
+        pop     bx
+        ret
+%endmacro
+
+; ============================================================
+; def_busy_delay
+; Generateur de boucle d'attente active (dec bx/jnz) - motif
+; identique utilise par lcd_short_delai/lcd_delay/lcd_delay_long
+; (lib/lcd.asm), i2c_delay (lib/lcd_i2c.asm) et uart_bit_delay
+; (lib/uart.asm), avec seul le nombre d'iterations qui change.
+; %1 = nom de la procedure a definir, %2 = nombre d'iterations (BX)
+; ============================================================
+%macro def_busy_delay 2
+%1:
+        push    bx
+        mov     bx, %2
+%%d:
+        dec     bx
+        jnz     %%d
+        pop     bx
+        ret
+%endmacro
+
 %endif ; COMMON_ASM

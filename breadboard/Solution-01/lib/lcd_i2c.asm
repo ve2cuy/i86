@@ -92,16 +92,11 @@ I2C_LCD_BL      equ     00001000b       ; P3 - retroeclairage, toujours actif ic
 ; cette reduction (peu d'effet percu par rapport a l'optimisation
 ; precedente, qui eliminait l'essentiel de la surcharge d'appels -
 ; celle-ci ne reduit que le plancher impose par i2c_delay lui-meme,
-; ~189 appels par transaction).
+; ~189 appels par transaction). Generee par def_busy_delay
+; (lib/common.asm) - meme motif que lcd_short_delai/lcd_delay/
+; lcd_delay_long (lib/lcd.asm) et uart_bit_delay (lib/uart.asm).
 ; ============================================================
-i2c_delay:
-        push    bx
-        mov     bx, 0001h
-.d:
-        dec     bx
-        jnz     .d
-        pop     bx
-        ret
+def_busy_delay i2c_delay, 0001h
 
 ; ============================================================
 ; i2c_start / i2c_stop / i2c_write_byte - ECRITURE PORT A "RAPIDE"
@@ -402,90 +397,17 @@ i2c_lcd_print:
         ret
 
 ; ============================================================
-; i2c_lcd_line1 / i2c_lcd_line2 / i2c_lcd_line3 / i2c_lcd_line4
-; Positionnement DDRAM, memes adresses que lcd_line1..4 (lcd.asm) -
-; meme convention "type A" pour un afficheur 4x20 (voir lcd.asm).
-; ============================================================
-i2c_lcd_line1:
-        push    ax
-        mov     al, 10000000b   ; Set DDRAM Address = 80h | 00h
-        call    i2c_lcd_command
-        pop     ax
-        ret
-
-i2c_lcd_line2:
-        push    ax
-        mov     al, 11000000b   ; Set DDRAM Address = 80h | 40h
-        call    i2c_lcd_command
-        pop     ax
-        ret
-
-i2c_lcd_line3:
-        push    ax
-        mov     al, 10010100b   ; Set DDRAM Address = 80h | 14h
-        call    i2c_lcd_command
-        pop     ax
-        ret
-
-i2c_lcd_line4:
-        push    ax
-        mov     al, 11010100b   ; Set DDRAM Address = 80h | 54h
-        call    i2c_lcd_command
-        pop     ax
-        ret
-
-; ============================================================
-; i2c_lcd_show_line1 / i2c_lcd_show_line2 / i2c_lcd_show_line3 /
-; i2c_lcd_show_line4
-; ============================================================
-i2c_lcd_show_line1:
-        call    i2c_lcd_line1
-        call    i2c_lcd_print
-        ret
-
-i2c_lcd_show_line2:
-        call    i2c_lcd_line2
-        call    i2c_lcd_print
-        ret
-
-i2c_lcd_show_line3:
-        call    i2c_lcd_line3
-        call    i2c_lcd_print
-        ret
-
-i2c_lcd_show_line4:
-        call    i2c_lcd_line4
-        call    i2c_lcd_print
-        ret
-
-; ============================================================
 ; i2c_lcd_tx_hex_nibble / i2c_lcd_tx_hex_byte
-; Affiche une valeur en hexadecimal majuscule (reutilise hex_table
-; de lib/common.asm - meme table que lcd_tx_hex_* et uart_tx_hex_*).
+; Affiche une valeur en hexadecimal majuscule. Generees par
+; def_tx_hex_nibble/byte (lib/common.asm) - voir ce fichier pour la
+; logique partagee avec lcd_tx_hex_* et uart_tx_hex_*.
+;
+; Positionnement DDRAM (i2c_lcd_line1..4/i2c_lcd_show_line1..4
+; d'origine): voir les macros i2c_lcd_goto/i2c_lcd_show dans
+; include/lcd_macros.inc.
 ; ============================================================
-i2c_lcd_tx_hex_nibble:
-        push    bx
-        and     al, 0Fh
-        mov     bl, al
-        xor     bh, bh
-        mov     al, [hex_table + bx]
-        call    i2c_lcd_data
-        pop     bx
-        ret
-
-i2c_lcd_tx_hex_byte:
-        push    bx
-        mov     bl, al
-        mov     al, bl
-        shr     al, 1
-        shr     al, 1
-        shr     al, 1
-        shr     al, 1
-        call    i2c_lcd_tx_hex_nibble
-        mov     al, bl
-        call    i2c_lcd_tx_hex_nibble
-        pop     bx
-        ret
+def_tx_hex_nibble i2c_lcd_tx_hex_nibble, i2c_lcd_data
+def_tx_hex_byte   i2c_lcd_tx_hex_byte,   i2c_lcd_tx_hex_nibble
 
 ; ============================================================
 ; i2c_lcd_init

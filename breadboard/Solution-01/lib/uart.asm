@@ -105,56 +105,22 @@ uart_tx_byte:
         pop     ax
         ret
 
-uart_bit_delay:
-        push    bx
-        mov     bx, UART_BIT_COUNT
-.d:
-        dec     bx
-        jnz     .d
-        pop     bx
-        ret
+; Generee par def_busy_delay (lib/common.asm) - meme motif que
+; lcd_short_delai/lcd_delay/lcd_delay_long (lib/lcd.asm) et
+; i2c_delay (lib/lcd_i2c.asm).
+def_busy_delay uart_bit_delay, UART_BIT_COUNT
 
 ; ============================================================
 ; uart_tx_hex_nibble / uart_tx_hex_byte / uart_tx_hex_word
 ; Affichent une valeur en hexadecimal (majuscules) via l'UART.
 ; Detruisent AX et BX (jamais CX/DX/SI/DI/ES/BP: sans danger a
 ; appeler depuis test_segment ou rom_dump au milieu d'une boucle).
+; Generees par def_tx_hex_nibble/byte/word (lib/common.asm) - voir
+; ce fichier pour la logique partagee avec lcd_tx_hex_* et
+; i2c_lcd_tx_hex_*.
 ; ============================================================
-uart_tx_hex_nibble:
-        ; Entree: AL (4 bits utiles) = valeur 0-15 a afficher
-        push    bx
-        and     al, 0Fh
-        mov     bl, al
-        xor     bh, bh
-        mov     al, [hex_table + bx]
-        call    uart_tx_byte
-        pop     bx
-        ret
-
-uart_tx_hex_byte:
-        ; Entree: AL = octet a afficher (2 caracteres hex)
-        push    bx
-        mov     bl, al          ; BL = copie de l'octet
-        mov     al, bl
-        shr     al, 1           ; 4x SHR reg,1: seul decalage disponible
-        shr     al, 1           ; sur un vrai 8086/8088 (immediat != 1
-        shr     al, 1           ; interdit avant le 80186)
-        shr     al, 1           ; AL = nibble de poids fort
-        call    uart_tx_hex_nibble
-        mov     al, bl          ; AL = octet original (nibble de poids
-        call    uart_tx_hex_nibble     ; faible - le AND est fait dans nibble)
-        pop     bx
-        ret
-
-uart_tx_hex_word:
-        ; Entree: AX = mot a afficher (4 caracteres hex, octet fort en 1er)
-        push    bx
-        mov     bx, ax
-        mov     al, bh
-        call    uart_tx_hex_byte
-        mov     al, bl
-        call    uart_tx_hex_byte
-        pop     bx
-        ret
+def_tx_hex_nibble uart_tx_hex_nibble, uart_tx_byte
+def_tx_hex_byte   uart_tx_hex_byte,   uart_tx_hex_nibble
+def_tx_hex_word   uart_tx_hex_word,   uart_tx_hex_byte
 
 %endif ; UART_ASM
