@@ -350,10 +350,13 @@ boucle déjà engagée ailleurs, ex. `test_ram`).
 |---|---|
 | `ps2_read_byte` | Lit UNE trame PS/2 complète (11 bits : start/8 données/parité impaire/stop), **bloque** jusqu'à réception. Sortie : `AL` = scan code brut (Set 2), `CF`=1 si erreur de parité/stop |
 | `ps2_wait_falling_edge` | Attend un front descendant de `CLOCK`, retourne l'état du Port B à cet instant (pour lire `DATA`) |
-| `ps2_get_char` | **Bloque** jusqu'à l'appui d'une touche reconnue (voir `ps2_keymap`) — consomme correctement les relâchements (`0xF0`) et touches étendues (`0xE0`, ex. flèches), ignorées. Sortie : `AL` = caractère ASCII |
-| `ps2_scancode_to_char` / `ps2_keymap` | Traduit un scan code Set 2 en caractère ASCII (chiffres `0-9`, lettres `A-F`, Entrée, Retour arrière, Échap) via une table `(scan code, caractère)` |
+| `ps2_get_char` | **Bloque** jusqu'à l'appui d'une touche reconnue — consomme correctement les relâchements (`0xF0`). Sortie : `AL` = caractère ASCII, ou `PS2_KEY_UP`/`DOWN`/`LEFT`/`RIGHT` pour une flèche |
+| `ps2_scancode_to_char` / `ps2_keymap` | Traduit un scan code Set 2 **normal** en caractère ASCII (chiffres `0-9`, lettres `A-F`, Entrée, Retour arrière, Échap) via une table `(scan code, caractère)` |
+| `ps2_extended_to_char` / `ps2_ext_keymap` | Traduit un scan code Set 2 **étendu** (préfixe `0xE0` — flèches) en `PS2_KEY_*`, même mécanique que ci-dessus |
+| `ps2_table_lookup` | Recherche générique dans une table `(code, valeur)` — factorise `ps2_scancode_to_char`/`ps2_extended_to_char` |
 | `ps2_hex_digit_value` | Caractère ASCII (`'0'-'9'`/`'A'-'F'`) → valeur `0-15`, `CF`=1 si non hexadécimal |
-| `ps2_read_hex` | Lit `CL` chiffres hexadécimaux au clavier, avec écho (UART **et** LCD) de chaque chiffre — utilisée par `edit_ram_action`. Pas de gestion du retour arrière (voir Directives.md) |
+| `ps2_read_hex_editable` | Lit `CL` chiffres hexadécimaux (largeur fixe), avec écho UART+LCD **et retour arrière** (efface visuellement, y compris sur le LCD via repositionnement DDRAM) — utilisée pour la saisie de l'adresse de départ |
+| `ps2_edit_byte_value` | Compose 0-2 chiffres hexadécimaux (retour arrière inclus), termine sur **Entrée** plutôt qu'à largeur fixe — utilisée pour éditer un octet dans la grille |
 
 ### Diagnostic bas niveau conditionnel (`TEST_PS2`)
 
@@ -405,14 +408,32 @@ des versions précédentes : chaque action est déclenchée par une touche
 ```
 
 **Edit RAM** (option 4 du menu principal, ou option 3 du menu Dump —
-même action `edit_ram_action` dans les deux cas) : invite deux
-saisies hexadécimales au clavier, avec écho UART+LCD, puis écrit
-l'octet en RAM (segment `0000h`, aucune vérification de bornes) :
+même action `edit_ram_action` dans les deux cas) : éditeur de RAM
+interactif. Demande d'abord une adresse de départ (avec retour
+arrière pour corriger) :
 
 ```
 Address: 0x0000
-Value:   0x00
 ```
+
+... puis affiche une **grille de 24 octets** (6 colonnes × 4 lignes —
+maximise ce qui tient sur le LCD 4×20) à partir de cette adresse, sur
+l'UART **et** le LCD (curseur **matériel** du LCD actif et clignotant
+sur la case sélectionnée) :
+
+```
+0000: 00 01 02 03 04 05
+0006: 06 07 08 09 0A 0B
+000C: 0C 0D 0E 0F 10 11
+0012: 12 13 14 15 16 17
+```
+
+| Touche | Effet |
+|---|---|
+| Flèches | Déplacent la case sélectionnée dans la grille |
+| Chiffre hexa (`0-9`/`A-F`) | Compose une nouvelle valeur pour la case courante (1 ou 2 chiffres, retour arrière pour corriger) |
+| Entrée | Écrit la valeur composée en RAM (ignorée si aucun chiffre tapé) |
+| `Q` / `q` | Termine l'édition, retour au menu |
 
 | Option | Action | Détail |
 |---|---|---|
@@ -420,16 +441,21 @@ Value:   0x00
 | Dump ROM | `rom_dump` | Inchangée — dump hex+ASCII des 4 premiers Ko de la ROM |
 | Dump first 4k RAM | `ram_dump_4k` (nouveau) | Réutilise `dump_line` telle quelle, pointée sur la RAM (segment `0000h`) plutôt que la ROM |
 | LED Show on PC | `effet1` | Inchangée — chenillard sur le Port C |
-| Edit RAM | `edit_ram_action` (nouveau) | Saisie adresse (4 chiffres) + valeur (2 chiffres) via `ps2_read_hex`, écrit l'octet en RAM |
+| Edit RAM | `edit_ram_action` (refait) | Grille interactive 24 octets, navigation aux flèches, édition avec retour arrière — voir `lib/ps2.asm` |
 | Home menu | — | Retour au menu principal depuis le menu Dump |
 
-⚠️ **Limitations connues du premier jalon** (voir Directives.md) :
-pas de retour arrière pendant la saisie hexadécimale (une touche
-erronée s'ignore, mais ne peut pas être corrigée en cours de champ —
-recommencer l'opération depuis le menu) ; la ligne 4 du LCD pendant
-`Dump first 4k RAM` affiche encore "`/257`" (dénominateur du dump ROM,
-qui a 257 lignes) même si le dump RAM n'en a que 256 — cosmétique
-seulement.
+État de l'éditeur (adresse de base + position du curseur) conservé
+dans `VAR_SEG` (`EDIT_BASE_OFF`/`EDIT_ROW_OFF`/`EDIT_COL_OFF` — voir
+`include/hardware.inc`), même zone que `PORTA_SHADOW`/les compteurs
+du test RAM.
+
+⚠️ **Limitation connue** (voir Directives.md) : la navigation aux
+flèches est **limitée à la grille de 24 octets** initialement
+affichée — pas de défilement vers d'autres pages pour ce premier
+jalon (quitter avec `Q` et rouvrir "Edit RAM" avec une autre adresse
+pour éditer ailleurs). La ligne 4 du LCD pendant `Dump first 4k RAM`
+affiche encore "`/257`" (dénominateur du dump ROM, qui a 257 lignes)
+même si le dump RAM n'en a que 256 — cosmétique seulement.
 
 ## Outils nécessaires pour produire le `.bin` final
 

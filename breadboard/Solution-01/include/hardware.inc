@@ -34,14 +34,18 @@ PIO         EQU    10000011B
 ; restent TOUJOURS en sortie.
 MASQUE_PIO  EQU    10000010B   ;PORT A ET C EN SORTIE, PORT B EN ENTREE (PS/2)
 
-; --- copie fantome du port A + compteurs de progression du test RAM:
+; --- copie fantome du port A + compteurs de progression du test RAM
+; --- + etat de l'editeur RAM (edit_ram_action, solution-01.asm):
 ; --- vivent dans la zone deja reservee a la pile (segment VAR_SEG,
 ; --- tout debut du dernier Ko non teste - voir "1 Ko reserve a la
-; --- pile" dans test_ram, solution-01.asm). 3 octets utilises sur
+; --- pile" dans test_ram, solution-01.asm). 7 octets utilises sur
 ; --- 1024 reserves. ---
 VAR_SEG             equ     1000h
 PORTA_SHADOW_OFF    equ     0FC00h
 BLOCK_COUNTER_OFF   equ     0FC01h  ; numero du bloc courant (1-127)
 DEFECT_COUNTER_OFF  equ     0FC02h  ; nombre de blocs ayant eu >=1 defaut
+EDIT_BASE_OFF       equ     0FC03h  ; adresse de base de la grille d'edition (mot)
+EDIT_ROW_OFF        equ     0FC05h  ; ligne courante du curseur (0-3)
+EDIT_COL_OFF        equ     0FC06h  ; colonne courante du curseur (0-5)
 
 %endif ; HARDWARE_INC

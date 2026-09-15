@@ -52,6 +52,14 @@
 PS2_CLOCK       equ     00000001b       ; PB0
 PS2_DATA        equ     00000010b       ; PB1
 
+; Codes retournes par ps2_get_char pour les fleches (touches etendues,
+; prefixe 0E0h) - valeurs choisies dans une plage inutilisee (aucun
+; caractere ASCII imprimable, ni CR/BS/ESC deja utilises par ce projet).
+PS2_KEY_UP      equ     11h
+PS2_KEY_DOWN    equ     12h
+PS2_KEY_LEFT    equ     13h
+PS2_KEY_RIGHT   equ     14h
+
 ; ============================================================
 ; ps2_wait_falling_edge
 ; Attend que CLOCK (PB0) soit haut puis redescende (front
@@ -186,14 +194,30 @@ ps2_keymap:
         db      076h, 27        ; Echap
         db      0, 0            ; fin de table
 
-; Entree: AL = scan code brut (make code) a chercher dans ps2_keymap.
-; Sortie: AL = caractere ASCII correspondant, CF=0 si trouve, CF=1
-; sinon (touche non geree par ce projet - AL indefini).
-ps2_scancode_to_char:
-        push    bx
+; ============================================================
+; ps2_ext_keymap / ps2_extended_to_char
+; Meme principe que ps2_keymap/ps2_scancode_to_char, mais pour les
+; scan codes ETENDUS (prefixe 0E0h - voir ps2_get_char): fleches
+; uniquement pour ce projet.
+; ============================================================
+ps2_ext_keymap:
+        db      075h, PS2_KEY_UP
+        db      072h, PS2_KEY_DOWN
+        db      06Bh, PS2_KEY_LEFT
+        db      074h, PS2_KEY_RIGHT
+        db      0, 0            ; fin de table
+
+; ============================================================
+; ps2_table_lookup
+; Recherche AL dans une table (code,valeur) pointee par BX, terminee
+; par 0,0 - factorise la logique commune a ps2_scancode_to_char et
+; ps2_extended_to_char.
+; Entree: AL = code a chercher, BX = adresse de la table.
+; Sortie: AL = valeur trouvee, CF=0 si trouve, CF=1 sinon.
+; ============================================================
+ps2_table_lookup:
         push    dx
         mov     dl, al
-        mov     bx, ps2_keymap
 .scan:
         mov     al, [bx]
         cmp     al, 0
@@ -210,16 +234,38 @@ ps2_scancode_to_char:
         stc
 .done:
         pop     dx
+        ret
+
+; Entree: AL = scan code brut (make code) a chercher dans ps2_keymap.
+; Sortie: AL = caractere ASCII correspondant, CF=0 si trouve, CF=1
+; sinon (touche non geree par ce projet - AL indefini).
+ps2_scancode_to_char:
+        push    bx
+        mov     bx, ps2_keymap
+        call    ps2_table_lookup
+        pop     bx
+        ret
+
+; Entree: AL = scan code brut ETENDU (apres le prefixe 0E0h) a
+; chercher dans ps2_ext_keymap.
+; Sortie: AL = code PS2_KEY_* correspondant, CF=0 si trouve, CF=1
+; sinon (touche etendue non geree par ce projet - AL indefini).
+ps2_extended_to_char:
+        push    bx
+        mov     bx, ps2_ext_keymap
+        call    ps2_table_lookup
         pop     bx
         ret
 
 ; ============================================================
 ; ps2_get_char
-; Bloque jusqu'a l'appui d'une touche RECONNUE (voir ps2_keymap) -
-; ignore les relachements (prefixe 0F0h) et les touches etendues
-; (prefixe 0E0h, ex: fleches) en consommant correctement leurs
-; sequences, ainsi que les touches non reconnues.
-; Sortie: AL = caractere ASCII de la touche pressee.
+; Bloque jusqu'a l'appui d'une touche RECONNUE (voir ps2_keymap pour
+; les touches normales, ps2_ext_keymap pour les fleches) - ignore les
+; relachements (prefixe 0F0h) en consommant correctement leur
+; sequence, ainsi que les touches non reconnues (normales ou
+; etendues).
+; Sortie: AL = caractere ASCII de la touche pressee, OU PS2_KEY_UP/
+;         DOWN/LEFT/RIGHT pour une fleche.
 ; Detruit: AX, BX, CX, DX. Jamais SI/DI/ES/BP.
 ; ============================================================
 ps2_get_char:
@@ -236,11 +282,13 @@ ps2_get_char:
 .got_e0:
         ; --- touche etendue: le prochain octet est soit F0 (relachement
         ; etendu, encore a consommer) soit le scan code de la pression
-        ; etendue elle-meme (ignoree - non geree par ce projet) ---
+        ; etendue elle-meme (fleche reconnue, ou ignoree sinon) ---
         call    ps2_read_byte
         cmp     al, 0F0h
         je      .got_e0_f0
-        jmp     .loop
+        call    ps2_extended_to_char
+        jc      .loop           ; touche etendue non geree - ignore, reboucle
+        ret                     ; AL = PS2_KEY_UP/DOWN/LEFT/RIGHT
 .got_e0_f0:
         call    ps2_read_byte   ; consomme le scan code du relachement etendu
         jmp     .loop
@@ -276,26 +324,39 @@ ps2_hex_digit_value:
         ret
 
 ; ============================================================
-; ps2_read_hex
-; Lit CL chiffres hexadecimaux au clavier (0-9, A-F), avec echo de
-; chaque chiffre sur l'UART ET le LCD parallele (DDRAM positionnee
-; par l'appelant avant l'appel - voir edit_ram_action). Ignore les
-; touches non-hexadecimales (Entree, Echap...) - PAS de gestion du
-; retour arriere pour ce premier jalon (voir Directives.md): en cas
-; d'erreur de saisie, recommencer l'operation depuis le menu.
-; Entree: CL = nombre de chiffres a lire (2 ou 4).
+; ps2_read_hex_editable
+; Lit CL chiffres hexadecimaux au clavier (0-9, A-F), avec echo sur
+; l'UART ET le LCD parallele, et gestion du RETOUR ARRIERE: efface
+; visuellement le dernier chiffre saisi (UART: BS/espace/BS: LCD:
+; repositionne la case, ecrit un espace, repositionne de nouveau) et
+; recule d'un chiffre. Termine des que CL chiffres valides sont
+; accumules (largeur fixe - contrairement a ps2_edit_byte_value, qui
+; termine sur Entree).
+;
+; IMPORTANT: l'appelant doit avoir positionne le curseur LCD (DDRAM)
+; au DEBUT du champ juste avant l'appel (ex: via lcd_show), ET fournir
+; cette meme adresse DDRAM dans AH (SANS le bit de commande 80h - ex:
+; LCD_LINE1 & 07Fh, plus la longueur d'un prefixe deja affiche sur
+; cette ligne), pour que le retour arriere puisse y repositionner
+; precisement le curseur.
+;
+; Entree: CL = nombre de chiffres a lire (2 ou 4). AH = adresse DDRAM
+;         de depart du champ (0-127, sans le bit de commande).
 ; Sortie: BX = valeur entree (chiffres accumules, MSB en premier).
 ; Detruit: AX, CX, DX (BX est la sortie). Jamais SI/DI/ES/BP.
 ; ============================================================
-ps2_read_hex:
+ps2_read_hex_editable:
         xor     bx, bx
-        mov     dh, cl          ; DH = nombre de chiffres restants (copie de
-                                 ; l'entree CL - CX est ensuite libre d'etre
-                                 ; detruit, y compris par les 2 echos hexa)
-.next_digit:
+        mov     ch, cl          ; CH = nombre TOTAL de chiffres a lire (fixe)
+        xor     dh, dh          ; DH = nombre de chiffres saisis jusqu'ici
+.next_key:
         call    ps2_get_char
+        cmp     al, 8           ; retour arriere ?
+        je      .backspace
         call    ps2_hex_digit_value
-        jc      .next_digit     ; pas un chiffre hexa - ignore, reboucle
+        jc      .next_key       ; touche non geree (Entree, Echap...) - ignore
+        cmp     dh, ch
+        jae     .next_key       ; deja le nombre de chiffres voulu - ignore
         mov     dl, al          ; DL = valeur de ce chiffre (0-15), survit
                                  ; aux 2 echos ci-dessous
         mov     cl, 4
@@ -305,8 +366,112 @@ ps2_read_hex:
         call    uart_tx_hex_nibble
         mov     al, dl
         call    lcd_tx_hex_nibble
+        inc     dh
+        cmp     dh, ch
+        jb      .next_key
+        ret
+.backspace:
+        cmp     dh, 0
+        je      .next_key       ; rien a effacer - ignore
         dec     dh
-        jnz     .next_digit
+        mov     cl, 4           ; efface le dernier chiffre de la valeur
+        shr     bx, cl          ; accumulee (division par 16)
+        mov     al, 8           ; efface visuellement sur l'UART (backspace,
+        call    uart_tx_byte    ; espace, backspace)
+        mov     al, ' '
+        call    uart_tx_byte
+        mov     al, 8
+        call    uart_tx_byte
+        mov     al, ah          ; --- efface visuellement sur le LCD:
+        add     al, dh          ; repositionne sur la case effacee, ecrit
+        or      al, 80h         ; un espace, repositionne de nouveau (le
+        call    lcd_command     ; prochain chiffre tape doit ecraser cette
+        mov     al, ' '         ; meme case, pas la suivante) ---
+        call    lcd_data
+        mov     al, ah
+        add     al, dh
+        or      al, 80h
+        call    lcd_command
+        jmp     .next_key
+
+; ============================================================
+; ps2_edit_byte_value
+; Compose une nouvelle valeur d'octet (0-2 chiffres hexa) au clavier,
+; avec echo UART+LCD et retour arriere (meme mecanique que
+; ps2_read_hex_editable), mais attend la touche ENTREE pour terminer
+; plutot que de completer automatiquement a un nombre fixe de
+; chiffres - permet de ne taper qu'1 chiffre (ex: 'F'+Entree = 0Fh).
+;
+; Le PREMIER caractere doit etre fourni par l'appelant en AL (deja lu
+; via ps2_get_char - evite de le relire/perdre si l'appelant a du le
+; lire pour decider d'appeler cette routine, voir edit_ram_action):
+; s'il n'est ni Entree, ni Retour arriere, ni un chiffre hexa, il est
+; simplement ignore (comme les touches suivantes) et la lecture
+; continue normalement.
+;
+; Entree: AL = premier caractere deja lu par l'appelant. AH = adresse
+;         DDRAM de la cellule (0-127, sans le bit de commande).
+; Sortie: BX = valeur composee. CF=0 si au moins un chiffre a ete
+;         tape (valeur a ecrire), CF=1 si Entree a ete pressee sans
+;         aucune saisie (BX indefini - rien a ecrire).
+; Detruit: AX, CX, DX (BX est la sortie). Jamais SI/DI/ES/BP.
+; ============================================================
+ps2_edit_byte_value:
+        xor     bx, bx
+        xor     dh, dh          ; DH = nombre de chiffres saisis (0-2)
+        jmp     .have_key       ; traite d'abord le caractere deja lu par
+                                 ; l'appelant, avant de lire les suivants
+.next_key:
+        call    ps2_get_char
+.have_key:
+        cmp     al, 13          ; Entree ?
+        je      .commit
+        cmp     al, 8           ; retour arriere ?
+        je      .backspace
+        call    ps2_hex_digit_value
+        jc      .next_key       ; touche non geree - ignore
+        cmp     dh, 2
+        jae     .next_key       ; deja 2 chiffres - ignore
+        mov     dl, al
+        mov     cl, 4
+        shl     bx, cl
+        or      bl, dl
+        mov     al, dl
+        call    uart_tx_hex_nibble
+        mov     al, dl
+        call    lcd_tx_hex_nibble
+        inc     dh
+        jmp     .next_key
+.backspace:
+        cmp     dh, 0
+        je      .next_key
+        dec     dh
+        mov     cl, 4
+        shr     bx, cl
+        mov     al, 8
+        call    uart_tx_byte
+        mov     al, ' '
+        call    uart_tx_byte
+        mov     al, 8
+        call    uart_tx_byte
+        mov     al, ah
+        add     al, dh
+        or      al, 80h
+        call    lcd_command
+        mov     al, ' '
+        call    lcd_data
+        mov     al, ah
+        add     al, dh
+        or      al, 80h
+        call    lcd_command
+        jmp     .next_key
+.commit:
+        cmp     dh, 0
+        je      .empty
+        clc
+        ret
+.empty:
+        stc
         ret
 
 %endif ; PS2_ASM

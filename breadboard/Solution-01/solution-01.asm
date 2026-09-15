@@ -557,63 +557,390 @@ ram_dump_4k:
         pop     ax
         ret
 
+EDIT_COLS               equ     6               ; octets par ligne de la grille d'edition
+EDIT_ROWS               equ     4               ; lignes de la grille (= 4 lignes du LCD)
+
 ; ============================================================
 ; edit_ram_action
-; Invite interactive au clavier PS/2: "Address: 0x____" puis
-; "Value:   0x__" (4 puis 2 chiffres hexa, echo UART+LCD via
-; ps2_read_hex - voir lib/ps2.asm), puis ecrit l'octet saisi en
-; RAM. Adresse "reelle" (segment 0000h, meme convention que
-; rom_dump/dump_line) - AUCUNE verification de bornes: on peut
-; ecrire n'importe ou dans les 64 Ko du segment 0000h, y compris
-; hors de la zone testee par test_ram (voir son en-tete).
+; Editeur de RAM interactif. Demande d'abord une adresse de depart
+; ("Address: 0x____", 4 chiffres hexa, retour arriere pour corriger -
+; voir ps2_read_hex_editable), puis affiche une grille de
+; EDIT_ROWS x EDIT_COLS (4x6 = 24) octets consecutifs a partir de
+; cette adresse, sur l'UART ET le LCD parallele (curseur MATERIEL du
+; LCD actif et clignotant sur la case courante).
+;
+; Controles une fois dans la grille:
+;   Fleches         - deplacent la case courante (limite a cette
+;                     grille de 24 octets pour ce premier jalon -
+;                     pas de defilement vers d'autres pages, voir
+;                     Directives.md)
+;   chiffre hexa     - compose une nouvelle valeur pour la case
+;                     courante (1 ou 2 chiffres, retour arriere pour
+;                     corriger - voir ps2_edit_byte_value)
+;   Entree           - ecrit la valeur composee en RAM (si au moins
+;                     un chiffre a ete tape - sinon ignoree)
+;   Q ou q           - termine l'edition, retourne au menu
+;
+; Adresse "reelle" (segment 0000h, meme convention que rom_dump/
+; dump_line) - AUCUNE verification de bornes: on peut ecrire
+; n'importe ou dans les 64 Ko du segment 0000h, y compris hors de la
+; zone testee par test_ram (voir son en-tete).
 ; ============================================================
 edit_ram_action:
         push    ax
         push    bx
         push    cx
         push    dx
+        push    si
         push    di
         push    es
 
         call    lcd_init                ; ecran propre pour la saisie
 
+        ; --- adresse de depart (avec correction) ---
         mov     si, txt_edit_address_prefix
         call    uart_tx_string
         mov     si, txt_edit_address_prefix
         lcd_show LCD_LINE1              ; curseur LCD reste juste apres "0x"
                                          ; (positionnement DDRAM auto-incremente)
         mov     cl, 4
-        call    ps2_read_hex            ; BX = adresse saisie (offset, 0000h-FFFFh)
-        mov     di, bx                  ; DI = offset a modifier
+        mov     ah, (LCD_LINE1 & 07Fh) + 11     ; 11 = longueur de "Address: 0x"
+        call    ps2_read_hex_editable   ; BX = adresse saisie (offset)
 
         mov     al, 13
         call    uart_tx_byte
         mov     al, 10
         call    uart_tx_byte
-
-        mov     si, txt_edit_value_prefix
-        call    uart_tx_string
-        mov     si, txt_edit_value_prefix
-        lcd_show LCD_LINE2
-        mov     cl, 2
-        call    ps2_read_hex            ; BX = valeur saisie (0-255 dans BL)
-
-        xor     ax, ax
-        mov     es, ax                  ; ES = 0000h
-        mov     [es:di], bl
-
-        mov     al, 13
-        call    uart_tx_byte
-        mov     al, 10
-        call    uart_tx_byte
-        mov     si, txt_edit_done
+        mov     si, txt_edit_help
         call    uart_tx_string
 
+        ; --- memorise l'adresse de base et remet le curseur logique
+        ; a (0,0) - vivent en RAM, voir hardware.inc ---
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_BASE_OFF
+        mov     [es:di], bx
+        mov     di, EDIT_ROW_OFF
+        mov     byte [es:di], 0
+        mov     di, EDIT_COL_OFF
+        mov     byte [es:di], 0
+
+.redraw:
+        call    edit_ram_draw_grid
+
+.wait_key:
+        call    ps2_get_char
+
+        cmp     al, 'q'
+        je      .quit
+        cmp     al, 'Q'
+        je      .quit
+
+        cmp     al, PS2_KEY_LEFT
+        jne     .not_left
+        call    edit_ram_move_left
+        jmp     .redraw
+.not_left:
+        cmp     al, PS2_KEY_RIGHT
+        jne     .not_right
+        call    edit_ram_move_right
+        jmp     .redraw
+.not_right:
+        cmp     al, PS2_KEY_UP
+        jne     .not_up
+        call    edit_ram_move_up
+        jmp     .redraw
+.not_up:
+        cmp     al, PS2_KEY_DOWN
+        jne     .not_down
+        call    edit_ram_move_down
+        jmp     .redraw
+.not_down:
+        ; --- toute autre touche: tente de composer une nouvelle
+        ; valeur pour la case courante - ps2_edit_byte_value ignore
+        ; lui-meme les touches non pertinentes (voir son en-tete) ---
+        mov     dl, al                   ; DL = touche deja lue (sauvegardee -
+                                          ; edit_ram_cell_ddram detruit AX)
+        call    edit_ram_cell_ddram      ; AH = adresse DDRAM de la case courante
+        mov     al, dl                   ; restaure AL = touche (AH inchange)
+        call    ps2_edit_byte_value      ; AL(entree)=touche deja lue, CF=1 si rien tape
+        jc      .redraw                  ; Entree sans saisie - rien a ecrire
+        mov     dl, bl                   ; DL = valeur a ecrire (survit a l'appel)
+        call    edit_ram_write_current
+        jmp     .redraw
+
+.quit:
         pop     es
         pop     di
+        pop     si
         pop     dx
         pop     cx
         pop     bx
+        pop     ax
+        ret
+
+; ============================================================
+; edit_ram_draw_grid
+; (Re)affiche la grille EDIT_ROWS x EDIT_COLS a partir de
+; EDIT_BASE_OFF (VAR_SEG), sur l'UART et le LCD parallele - puis
+; positionne le curseur materiel du LCD (actif, clignotant) sur la
+; cellule EDIT_ROW_OFF/EDIT_COL_OFF.
+; ============================================================
+edit_ram_draw_grid:
+        push    ax
+        push    bx
+        push    cx
+        push    dx
+        push    si
+        push    di
+        push    es
+
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_BASE_OFF
+        mov     bx, [es:di]      ; BX = adresse de base (offset RAM, segment 0000h)
+
+        call    lcd_init         ; ecran propre a chaque redessin (simple/robuste)
+
+        xor     ax, ax
+        mov     es, ax           ; ES = 0000h (segment RAM edite)
+        mov     di, bx           ; DI = adresse courante, avance octet par octet
+
+        mov     dh, 0            ; DH = ligne courante (0-3)
+.row_loop:
+        cmp     dh, 0
+        jne     .row_not0
+        lcd_goto LCD_LINE1
+        jmp     .row_go
+.row_not0:
+        cmp     dh, 1
+        jne     .row_not1
+        lcd_goto LCD_LINE2
+        jmp     .row_go
+.row_not1:
+        cmp     dh, 2
+        jne     .row_not2
+        lcd_goto LCD_LINE3
+        jmp     .row_go
+.row_not2:
+        lcd_goto LCD_LINE4
+.row_go:
+        ; --- UART: adresse reelle de debut de cette ligne ---
+        mov     ax, di
+        call    uart_tx_hex_word
+        mov     al, ':'
+        call    uart_tx_byte
+        mov     al, ' '
+        call    uart_tx_byte
+
+        mov     dl, 0            ; DL = colonne courante (0-5)
+.col_loop:
+        mov     al, [es:di]
+        mov     ah, al           ; AH = copie de l'octet - survit a lcd_tx_hex_byte
+                                  ; (qui detruit AL, mais jamais AH - voir def_tx_hex_*)
+        call    lcd_tx_hex_byte
+        mov     al, ah
+        call    uart_tx_hex_byte
+        mov     al, ' '
+        call    lcd_data
+        mov     al, ' '
+        call    uart_tx_byte
+        inc     di
+        inc     dl
+        cmp     dl, EDIT_COLS
+        jb      .col_loop
+
+        mov     al, 13
+        call    uart_tx_byte
+        mov     al, 10
+        call    uart_tx_byte
+
+        inc     dh
+        cmp     dh, EDIT_ROWS
+        jb      .row_loop
+
+        call    edit_ram_place_cursor
+
+        pop     es
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
+        ret
+
+; ============================================================
+; edit_ram_cell_ddram
+; Calcule l'adresse DDRAM (SANS le bit de commande) de la case
+; courante (EDIT_ROW_OFF/EDIT_COL_OFF) - "XX " = 3 caracteres par
+; cellule sur le LCD.
+; Sortie: AH = adresse DDRAM (0-127).
+; ============================================================
+edit_ram_cell_ddram:
+        push    bx
+        push    cx
+        push    es
+        push    di
+
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_ROW_OFF
+        mov     bh, [es:di]      ; BH = ligne (0-3)
+        mov     di, EDIT_COL_OFF
+        mov     bl, [es:di]      ; BL = colonne (0-5)
+
+        mov     al, bl
+        mov     cl, 3
+        mul     cl               ; AX = colonne*3
+        mov     cl, al           ; CL = decalage colonne (0,3,...,15)
+
+        cmp     bh, 0
+        je      .r0
+        cmp     bh, 1
+        je      .r1
+        cmp     bh, 2
+        je      .r2
+        mov     al, LCD_LINE4 & 07Fh
+        jmp     .go
+.r0:    mov     al, LCD_LINE1 & 07Fh
+        jmp     .go
+.r1:    mov     al, LCD_LINE2 & 07Fh
+        jmp     .go
+.r2:    mov     al, LCD_LINE3 & 07Fh
+.go:
+        add     al, cl
+        mov     ah, al           ; AH = adresse DDRAM (sortie)
+
+        pop     di
+        pop     es
+        pop     cx
+        pop     bx
+        ret
+
+; ============================================================
+; edit_ram_place_cursor
+; Positionne le curseur materiel du LCD (active, clignotant) sur la
+; cellule courante (voir edit_ram_cell_ddram).
+; ============================================================
+edit_ram_place_cursor:
+        push    ax
+        call    edit_ram_cell_ddram
+        mov     al, ah
+        or      al, 80h
+        call    lcd_command
+        mov     al, 00001111b    ; Display ON, curseur ON, clignotement ON
+        call    lcd_command
+        pop     ax
+        ret
+
+; ============================================================
+; edit_ram_write_current
+; Ecrit DL en RAM (segment 0000h) a l'adresse EDIT_BASE_OFF +
+; EDIT_ROW_OFF*EDIT_COLS + EDIT_COL_OFF.
+; Entree: DL = valeur a ecrire.
+; ============================================================
+edit_ram_write_current:
+        push    ax
+        push    bx
+        push    cx
+        push    di
+        push    es
+
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_BASE_OFF
+        mov     bx, [es:di]      ; BX = adresse de base
+        mov     di, EDIT_ROW_OFF
+        mov     al, [es:di]      ; AL = ligne (0-3)
+        mov     cl, EDIT_COLS
+        mul     cl               ; AX = ligne*EDIT_COLS
+        add     bx, ax           ; BX += ligne*EDIT_COLS
+        mov     di, EDIT_COL_OFF
+        mov     al, [es:di]      ; AL = colonne (0-5)
+        xor     ah, ah
+        add     bx, ax           ; BX += colonne -> BX = adresse RAM cible
+
+        xor     ax, ax
+        mov     es, ax           ; ES = 0000h
+        mov     di, bx
+        mov     [es:di], dl
+
+        pop     es
+        pop     di
+        pop     cx
+        pop     bx
+        pop     ax
+        ret
+
+; ============================================================
+; edit_ram_move_left / _right / _up / _down
+; Deplace le curseur logique (EDIT_ROW_OFF/EDIT_COL_OFF, VAR_SEG)
+; dans la grille - fixe aux bords (pas de defilement au-dela de la
+; grille initialement affichee pour ce premier jalon - voir
+; Directives.md).
+; ============================================================
+edit_ram_move_left:
+        push    ax
+        push    es
+        push    di
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_COL_OFF
+        cmp     byte [es:di], 0
+        je      .done
+        dec     byte [es:di]
+.done:
+        pop     di
+        pop     es
+        pop     ax
+        ret
+
+edit_ram_move_right:
+        push    ax
+        push    es
+        push    di
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_COL_OFF
+        cmp     byte [es:di], EDIT_COLS-1
+        jae     .done
+        inc     byte [es:di]
+.done:
+        pop     di
+        pop     es
+        pop     ax
+        ret
+
+edit_ram_move_up:
+        push    ax
+        push    es
+        push    di
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_ROW_OFF
+        cmp     byte [es:di], 0
+        je      .done
+        dec     byte [es:di]
+.done:
+        pop     di
+        pop     es
+        pop     ax
+        ret
+
+edit_ram_move_down:
+        push    ax
+        push    es
+        push    di
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_ROW_OFF
+        cmp     byte [es:di], EDIT_ROWS-1
+        jae     .done
+        inc     byte [es:di]
+.done:
+        pop     di
+        pop     es
         pop     ax
         ret
 
@@ -1207,11 +1534,9 @@ txt_menu_dump:          db      27,'[36m','--- Menu Dump memory ---',27,'[0m',13
                         db      '3) Edit RAM',13,10
                         db      '9) Home menu',13,10,13,10,0
 
-; ---- invite "Edit RAM" (voir edit_ram_action) - "0x" aligne a la
-; ---- meme colonne sur les 2 lignes (11 caracteres avant les chiffres) ----
+; ---- invite "Edit RAM" (voir edit_ram_action) ----
 txt_edit_address_prefix: db     'Address: 0x', 0
-txt_edit_value_prefix:  db      'Value:   0x', 0
-txt_edit_done:          db      27,'[32m','Octet ecrit en RAM.',27,'[0m',13,10,13,10,0
+txt_edit_help:           db     27,'[36m','Fleches: deplacer | chiffre hexa: editer | Entree: enregistrer | Q: quitter',27,'[0m',13,10,13,10,0
 
 ; ---- texte du LCD I2C (PCF8574 0x27) - pas de padding, pas de
 ; ---- largeur fixe imposee comme sur le LCD parallele ----
