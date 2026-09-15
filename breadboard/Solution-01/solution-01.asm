@@ -88,14 +88,14 @@ SECONDE         equ     1000            ; 1 seconde = 1000 ms
 
 ; ------------------------------------------------------------
 ; TEST_PS2 (decommenter la ligne %define ci-dessous pour activer):
-; premier jalon de mise en service d'un clavier PS/2 (PB0=CLOCK,
-; PB1=DATA - voir lib/ps2.asm). REMPLACE le POST normal par une
-; boucle infinie qui affiche sur l'UART le scan code brut (Set 2)
-; de chaque trame recue - sert UNIQUEMENT a valider le cablage/
-; protocole avant d'ecrire un vrai pilote (traduction scan code ->
-; caractere) - voir Directives.md. Bascule aussi le Port B du 8255
-; en ENTREE (voir MASQUE_PIO, include/hardware.inc) - AUCUN autre
-; changement quand cette directive reste desactivee (par defaut).
+; diagnostic BAS NIVEAU du clavier PS/2 (PB0=CLOCK, PB1=DATA - voir
+; lib/ps2.asm) - REMPLACE le menu interactif par une boucle infinie
+; qui affiche sur l'UART le scan code BRUT (Set 2, sans traduction)
+; de chaque trame recue. Utile pour verifier le cablage/protocole
+; independamment de la couche de traduction clavier->ASCII
+; (ps2_get_char) utilisee par le menu. Desactive par defaut (le
+; menu, qui utilise deja le clavier via ps2_get_char, est le
+; comportement normal - voir Directives.md).
 ; %define TEST_PS2
 ; ------------------------------------------------------------
 
@@ -216,46 +216,112 @@ start:
         lcd_show LCD_LINE4
         delay_ms (3*SECONDE)
 
-.ici:
+        ; --- Bandeau d'identification: affiche une seule fois, avant
+        ; d'entrer dans le menu (remplace l'ancienne boucle POST
+        ; automatique .ici:/.temp: - voir Directives.md: le menu
+        ; interactif, pilote par le clavier PS/2, est maintenant le
+        ; comportement normal) ---
         cls                     ; efface l'ecran du terminal (ANSI)
         mov     si, txt_auteur
         call    uart_tx_string
-        delay_ms SECONDE        ; pause de 1 seconde avant de débuter le test (permet de voir le message de depart)
 
-.temp:
-        mov     si, txt_8255_init
+; ============================================================
+; Menu principal / menu Dump memory
+; Chaque option est declenchee par l'utilisateur (clavier PS/2 -
+; voir lib/ps2.asm, ps2_get_char) au lieu de s'enchainer
+; automatiquement comme avant. Le menu courant est redessine
+; (UART+LCD) apres chaque action, ou immediatement si la touche
+; pressee n'est pas une des options listees.
+; ============================================================
+.main_menu:
+        call    lcd_init                ; ecran propre pour le menu
+        mov     si, txt_menu_main
         call    uart_tx_string
-        call    lcd_init        ; (re)initialise le LCD a chaque cycle (Clear Display inclus)
-                                 ; (init_8255 n'est PLUS appele ici - voir start:)
-
-        ; --- Etape 1: test du 8255 (animation sur le Port C) ---
-        mov     si, lcd_txt_step1_l1
+        mov     si, lcd_txt_menu_main_l1
         lcd_show LCD_LINE1
-        mov     si, lcd_txt_step1_l2
+        mov     si, lcd_txt_menu_main_l2
         lcd_show LCD_LINE2
-        mov     si, lcd_txt_step1_l4   ; texte fixe (ligne 3 = progression
-        lcd_show LCD_LINE4             ; live, mise a jour par effet1)
-        call    effet1
-;        jmp     .temp
+        mov     si, lcd_txt_menu_main_l3
+        lcd_show LCD_LINE3
+        mov     si, lcd_txt_menu_main_l4
+        lcd_show LCD_LINE4
 
-        ; --- Etape 2: test de la RAM (ligne 2 mise a jour a chaque bloc) ---
-        mov     si, lcd_txt_step2_l1
+        call    ps2_get_char            ; bloque jusqu'a une touche reconnue
+
+        cmp     al, '1'
+        jne     .main_2
+        call    lcd_init
+        mov     si, lcd_txt_run_ram_l1
         lcd_show LCD_LINE1
-        mov     si, lcd_txt_step2_l2
+        mov     si, lcd_txt_run_ram_l2
         lcd_show LCD_LINE2
-
-        call    test_ram        ; teste toute la RAM (128K) et rapporte via UART+LCD
-
-        ; --- Etape 3: dump de la ROM ---
-        mov     si, lcd_txt_step3_l1
+        call    test_ram                ; teste toute la RAM (128K), rapporte via UART+LCD
+        jmp     .main_menu
+.main_2:
+        cmp     al, '2'
+        jne     .main_3
+        jmp     .dump_menu
+.main_3:
+        cmp     al, '3'
+        jne     .main_4
+        call    lcd_init
+        mov     si, lcd_txt_run_led_l1
         lcd_show LCD_LINE1
-        mov     si, lcd_txt_step3_l2
+        mov     si, lcd_txt_run_led_l2
         lcd_show LCD_LINE2
+        mov     si, lcd_txt_run_led_l4  ; texte fixe (ligne 3 = progression
+        lcd_show LCD_LINE4              ; live, mise a jour par effet1)
+        call    effet1                  ; animation Port C (chenillard)
+        jmp     .main_menu
+.main_4:
+        cmp     al, '4'
+        jne     .main_menu              ; touche non reconnue - redessine le menu
+        call    edit_ram_action
+        jmp     .main_menu
 
-        call    rom_dump        ; dump des 16 premiers Ko de la ROM - voir plus bas
+.dump_menu:
+        call    lcd_init
+        mov     si, txt_menu_dump
+        call    uart_tx_string
+        mov     si, lcd_txt_menu_dump_l1
+        lcd_show LCD_LINE1
+        mov     si, lcd_txt_menu_dump_l2
+        lcd_show LCD_LINE2
+        mov     si, lcd_txt_menu_dump_l3
+        lcd_show LCD_LINE3
+        mov     si, lcd_txt_menu_dump_l4
+        lcd_show LCD_LINE4
 
-        delay_ms (2*SECONDE)    ; pause de 2 secondes avant de relancer un cycle
-        jmp     .ici            ; reboucle indefiniment
+        call    ps2_get_char
+
+        cmp     al, '1'
+        jne     .dump_2
+        call    lcd_init
+        mov     si, lcd_txt_run_romdump_l1
+        lcd_show LCD_LINE1
+        mov     si, lcd_txt_run_romdump_l2
+        lcd_show LCD_LINE2
+        call    rom_dump                ; dump des 4 premiers Ko de la ROM - voir plus bas
+        jmp     .dump_menu
+.dump_2:
+        cmp     al, '2'
+        jne     .dump_3
+        call    lcd_init
+        mov     si, lcd_txt_run_ramdump_l1
+        lcd_show LCD_LINE1
+        mov     si, lcd_txt_run_ramdump_l2
+        lcd_show LCD_LINE2
+        call    ram_dump_4k             ; dump des 4 premiers Ko de la RAM - voir plus bas
+        jmp     .dump_menu
+.dump_3:
+        cmp     al, '3'
+        jne     .dump_9
+        call    edit_ram_action
+        jmp     .dump_menu
+.dump_9:
+        cmp     al, '9'
+        jne     .dump_menu              ; touche non reconnue - redessine le menu
+        jmp     .main_menu
 
 ; ============================================================
 ; test_ram
@@ -307,7 +373,7 @@ test_ram:
         je      .ram_ok
 
         call    msg_ram_defectueuse
-        ret                     ; retourne a .ici (qui enchaine avec rom_dump)
+        ret                     ; retourne au menu (voir start:)
 
 .ram_ok:
         call    msg_ram_ok
@@ -436,6 +502,115 @@ rom_dump:
         pop     es
         pop     di
         pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
+        ret
+
+; ============================================================
+; ram_dump_4k
+; Dump hexadecimal+ASCII des 4 premiers Ko de la RAM (segment
+; 0000h, offsets 0000h-0FFFh) - reutilise dump_line TELLE QUELLE
+; (256 lignes de 16 octets, memes formats UART/LCD[/LCD-I2C] que
+; rom_dump), sans la ligne speciale des 16 derniers octets
+; (specifique au vecteur de reset de la ROM, non pertinente ici).
+;
+; Note: la ligne 4 du LCD affiche "Ligne: NNN/257" (voir dump_line)
+; - le "/257" reste celui du dump ROM (256+1 ligne speciale); ce
+; dump RAM n'a que 256 lignes, le denominateur est donc legerement
+; inexact pour ce cas - cosmetique seulement, pas corrige pour
+; l'instant (voir Directives.md).
+; ============================================================
+RAM_DUMP_SIZE           equ     1000h           ; 4 Ko a dumper depuis le debut
+
+ram_dump_4k:
+        push    ax
+        push    bx
+        push    cx
+        push    dx
+        push    si
+        push    di
+        push    es
+
+        call    msg_ram_dump_banniere
+
+        xor     ax, ax
+        mov     es, ax          ; ES = 0000h (meme segment que le premier
+                                 ; bloc teste par test_ram)
+        xor     di, di
+        mov     bx, 1
+.line_loop:
+        call    dump_line               ; affiche ES:DI (UART+LCD), avance DI de 16
+        inc     bx
+        cmp     di, RAM_DUMP_SIZE
+        jb      .line_loop
+
+        call    msg_dump_fin            ; reutilise le message existant ("Dump termine")
+
+        pop     es
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
+        ret
+
+; ============================================================
+; edit_ram_action
+; Invite interactive au clavier PS/2: "Address: 0x____" puis
+; "Value:   0x__" (4 puis 2 chiffres hexa, echo UART+LCD via
+; ps2_read_hex - voir lib/ps2.asm), puis ecrit l'octet saisi en
+; RAM. Adresse "reelle" (segment 0000h, meme convention que
+; rom_dump/dump_line) - AUCUNE verification de bornes: on peut
+; ecrire n'importe ou dans les 64 Ko du segment 0000h, y compris
+; hors de la zone testee par test_ram (voir son en-tete).
+; ============================================================
+edit_ram_action:
+        push    ax
+        push    bx
+        push    cx
+        push    dx
+        push    di
+        push    es
+
+        call    lcd_init                ; ecran propre pour la saisie
+
+        mov     si, txt_edit_address_prefix
+        call    uart_tx_string
+        mov     si, txt_edit_address_prefix
+        lcd_show LCD_LINE1              ; curseur LCD reste juste apres "0x"
+                                         ; (positionnement DDRAM auto-incremente)
+        mov     cl, 4
+        call    ps2_read_hex            ; BX = adresse saisie (offset, 0000h-FFFFh)
+        mov     di, bx                  ; DI = offset a modifier
+
+        mov     al, 13
+        call    uart_tx_byte
+        mov     al, 10
+        call    uart_tx_byte
+
+        mov     si, txt_edit_value_prefix
+        call    uart_tx_string
+        mov     si, txt_edit_value_prefix
+        lcd_show LCD_LINE2
+        mov     cl, 2
+        call    ps2_read_hex            ; BX = valeur saisie (0-255 dans BL)
+
+        xor     ax, ax
+        mov     es, ax                  ; ES = 0000h
+        mov     [es:di], bl
+
+        mov     al, 13
+        call    uart_tx_byte
+        mov     al, 10
+        call    uart_tx_byte
+        mov     si, txt_edit_done
+        call    uart_tx_string
+
+        pop     es
+        pop     di
         pop     dx
         pop     cx
         pop     bx
@@ -843,7 +1018,7 @@ msg_ram_defectueuse:
         ret
 
 ; ============================================================
-; msg_dump_banniere / msg_dump_fin
+; msg_dump_banniere / msg_dump_fin / msg_ram_dump_banniere
 ; ============================================================
 msg_dump_banniere:
         mov     si, txt_dump_banniere
@@ -852,6 +1027,11 @@ msg_dump_banniere:
 
 msg_dump_fin:
         mov     si, txt_dump_fin
+        call    uart_tx_string
+        ret
+
+msg_ram_dump_banniere:
+        mov     si, txt_ram_dump_banniere
         call    uart_tx_string
         ret
 
@@ -1007,11 +1187,31 @@ txt_dump_banniere:      db      27,'[34m','=== Dump ROM - 4 premiers Ko (C000:00
 
 txt_dump_fin:            db      27,'[32m','*** Dump ROM termine ***',27,'[0m',13,10,13,10,0
 
-txt_8255_init:           db      27,'[33m','*** Test des 8255 (effet1) - solution-01: UART sur PA7 ***',27,'[0m',13,10,13,10,0
+txt_ram_dump_banniere:  db      27,'[34m','=== Dump RAM - 4 premiers Ko (0000:0000-0000:0FF0) ===',27,'[0m',13,10,13,10,0
 
 txt_auteur:             db      '8088 sur breadboard version 2026',13,10
                         db      'Par Alain Boudreault, aka VE2CUY',13,10
                         db      '--------------------------------',13,10,13,10,0
+
+; ---- menu principal / menu Dump memory (voir start:) - textes UART,
+; ---- affiches en plus des lignes LCD dediees ci-dessous ----
+txt_menu_main:          db      27,'[36m','--- Menu principal ---',27,'[0m',13,10
+                        db      '1) Test RAM',13,10
+                        db      '2) Dump memory',13,10
+                        db      '3) LED Show on PC',13,10
+                        db      '4) Edit RAM',13,10,13,10,0
+
+txt_menu_dump:          db      27,'[36m','--- Menu Dump memory ---',27,'[0m',13,10
+                        db      '1) Dump ROM',13,10
+                        db      '2) Dump first 4k RAM',13,10
+                        db      '3) Edit RAM',13,10
+                        db      '9) Home menu',13,10,13,10,0
+
+; ---- invite "Edit RAM" (voir edit_ram_action) - "0x" aligne a la
+; ---- meme colonne sur les 2 lignes (11 caracteres avant les chiffres) ----
+txt_edit_address_prefix: db     'Address: 0x', 0
+txt_edit_value_prefix:  db      'Value:   0x', 0
+txt_edit_done:          db      27,'[32m','Octet ecrit en RAM.',27,'[0m',13,10,13,10,0
 
 ; ---- texte du LCD I2C (PCF8574 0x27) - pas de padding, pas de
 ; ---- largeur fixe imposee comme sur le LCD parallele ----
@@ -1027,15 +1227,34 @@ lcd_txt_splash_l3:      times   20 db '-'       ; remplissage '-' (pas ' ') - ho
                         db      0
 lcd_text lcd_txt_splash_l4, '(c) VE2CUY 2026', 20
 
-lcd_text lcd_txt_step1_l1, '1/3 - Test 8255', 20
-lcd_text lcd_txt_step1_l2, 'Chenillard Port C', 20
-lcd_text lcd_txt_step1_l4, 'VE2CUY 2026', 20
+; ---- menu principal (voir start:) - 1 ligne LCD par option, meme
+; ---- texte que le menu UART (txt_menu_main) ----
+lcd_text lcd_txt_menu_main_l1, '1) Test RAM', 20
+lcd_text lcd_txt_menu_main_l2, '2) Dump memory', 20
+lcd_text lcd_txt_menu_main_l3, '3) LED Show on PC', 20
+lcd_text lcd_txt_menu_main_l4, '4) Edit RAM', 20
 
-lcd_text lcd_txt_step2_l1, '2/3 - Test RAM 128K', 20
-lcd_text lcd_txt_step2_l2, 'En attente...', 20
+; ---- menu Dump memory (voir start:) ----
+lcd_text lcd_txt_menu_dump_l1, '1) Dump ROM', 20
+lcd_text lcd_txt_menu_dump_l2, '2) Dump first 4k RAM', 20
+lcd_text lcd_txt_menu_dump_l3, '3) Edit RAM', 20
+lcd_text lcd_txt_menu_dump_l4, '9) Home menu', 20
 
-lcd_text lcd_txt_step3_l1, '3/3 - Dump ROM', 20
-lcd_text lcd_txt_step3_l2, 'Dump 4K+16 octets', 20
+; ---- bandeau ligne1/ligne2 affiche avant chaque action lancee depuis
+; ---- un menu (lignes 3/4 sont mises a jour en direct par l'action
+; ---- elle-meme - voir start:) ----
+lcd_text lcd_txt_run_ram_l1, 'Test RAM 128K', 20
+lcd_text lcd_txt_run_ram_l2, 'En cours...', 20
+
+lcd_text lcd_txt_run_led_l1, 'Test 8255', 20
+lcd_text lcd_txt_run_led_l2, 'Chenillard Port C', 20
+lcd_text lcd_txt_run_led_l4, 'VE2CUY 2026', 20
+
+lcd_text lcd_txt_run_romdump_l1, 'Dump ROM', 20
+lcd_text lcd_txt_run_romdump_l2, 'Dump 4K+16 octets', 20
+
+lcd_text lcd_txt_run_ramdump_l1, 'Dump RAM 4K', 20
+lcd_text lcd_txt_run_ramdump_l2, 'En cours...', 20
 
 ; ---- complement de 11 espaces utilise par dump_line, apres les 9
 ; ---- caracteres d'adresse "SSSS:OOOO" (9+11=20) ----

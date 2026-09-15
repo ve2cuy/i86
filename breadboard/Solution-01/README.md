@@ -7,18 +7,16 @@ Alain Boudreault (VE2CUY). Au démarrage, la carte :
    (bit-bang), en guise de test de cette fonctionnalité ;
 2. affiche un écran de démarrage sur le LCD parallèle 4×20 pendant
    3 secondes ;
-3. anime le Port C du 8255 (chenillard) pendant que la ligne UART
-   transmet un bandeau de bienvenue ;
-4. teste la totalité de la RAM statique (128 Ko) et rapporte le
-   résultat (UART + LCD) ;
-5. fait un dump hexadécimal des 4 premiers Ko de la ROM (+ les 16
-   derniers octets : vecteur de reset et signature) ;
-6. reboucle indéfiniment (sans reprendre le test du LCD I2C, qui ne
-   tourne qu'une fois).
+3. affiche un **menu interactif** (UART + LCD), piloté au clavier
+   PS/2, qui reste le comportement normal de la carte tant qu'elle
+   est sous tension — voir [Menu interactif](#menu-interactif)
+   ci-dessous pour la structure complète.
 
-Ce cycle sert de "power-on self-test" (POST) pour valider le montage
-matériel (8255, RAM, LCD parallèle, LCD I2C, UART) à chaque mise sous
-tension.
+Contrairement aux versions précédentes, il n'y a plus de "power-on
+self-test" (POST) qui s'enchaîne automatiquement — chaque test (RAM,
+dump ROM/RAM, animation du Port C, édition de la RAM) est maintenant
+déclenché explicitement depuis le menu. Le clavier PS/2 est donc
+**requis** pour que la carte fasse quoi que ce soit après le splash.
 
 ## Matériel visé
 
@@ -29,8 +27,8 @@ tension.
 - RAM statique 128 Ko
 - Un 8255 (PIO) : Port A entièrement occupé (LCD parallèle, UART
   logiciel et LCD I2C logiciel), Port C utilisé pour l'animation du
-  POST, Port B libre (réservé au clavier PS/2, voir plus bas —
-  `TEST_PS2` uniquement)
+  POST, **Port B en entrée en permanence** (clavier PS/2 — requis
+  pour le menu interactif, voir plus bas)
 - Câblage du Port A (voir l'en-tête de `solution-01.asm`) — **les 8
   bits sont utilisés** :
   - `PA0` → `D4` du LCD parallèle **ET** `SCL` du LCD I2C (broche
@@ -45,8 +43,8 @@ tension.
 - LCD parallèle HD44780 4 lignes × 20 caractères, piloté en mode 4 bits
 - LCD I2C HD44780 (derrière un expandeur PCF8574, adresse `0x27` —
   "backpack" standard), piloté en I2C logiciel
-- Clavier PS/2 (optionnel, `TEST_PS2` uniquement) : `PB0` = `CLOCK`,
-  `PB1` = `DATA`, résistances de tirage externes requises
+- Clavier PS/2 (**requis** — voir [Menu interactif](#menu-interactif)) :
+  `PB0` = `CLOCK`, `PB1` = `DATA`, résistances de tirage externes requises
 
 Comme le LCD parallèle, l'UART et le LCD I2C se partagent le même
 octet matériel (le 8255 en mode 0 n'adresse pas le Port A bit à bit),
@@ -97,7 +95,7 @@ flowchart TD
     end
 
     LED["Port C: chenillard (animation POST)"]
-    PS2["Clavier PS/2 (TEST_PS2 uniquement)\nPB0=CLOCK, PB1=DATA - Port B en entree"]
+    PS2["Clavier PS/2 (requis - menu interactif)\nPB0=CLOCK, PB1=DATA - Port B en entree"]
 
     AB --> A19G
     A19G --> NOTA19
@@ -332,39 +330,36 @@ répéter le flag `-d` à chaque fois.
 
 ## Fonctions d'accès au clavier PS/2 (`lib/ps2.asm`)
 
-Premier jalon de mise en service d'un clavier PS/2 : lecture d'une
-trame brute en **polling pur** (aucune interruption — le projet n'en
-utilise pas encore) sur le Port B du 8255 (`PB0`=`CLOCK`,
-`PB1`=`DATA`). Contrairement à l'UART, le **clavier est maître de
-l'horloge** — il envoie des bits de façon asynchrone, quand une touche
-est pressée/relâchée — donc `ps2_read_byte` doit tourner sans
-interruption logicielle du début à la fin d'une trame, sous peine de
-rater un front d'horloge.
+Lecture d'un clavier PS/2 en **polling pur** (aucune interruption — le
+projet n'en utilise pas encore, voir Directives.md) sur le Port B du
+8255 (`PB0`=`CLOCK`, `PB1`=`DATA`, **toujours en entrée** — voir
+`MASQUE_PIO` dans `include/hardware.inc`). Contrairement à l'UART, le
+**clavier est maître de l'horloge** — il envoie des bits de façon
+asynchrone, quand une touche est pressée/relâchée — donc toute lecture
+doit tourner sans interruption logicielle du début à la fin d'une
+trame, sous peine de rater un front d'horloge (jamais depuis une
+boucle déjà engagée ailleurs, ex. `test_ram`).
 
 > **Câblage USB → PS/2** (pour un clavier/câble USB adapté en PS/2) :
-> `VBUS`→`+5V`, `D−`→`Data`, `D+`→`Clock`, `GND`→`GND`.
+> `VBUS`→`+5V`, `D−`→`Data`, `D+`→`Clock`, `GND`→`GND`. Fonctionne avec
+> tout clavier USB à repli PS/2 (confirmé sur ce montage) — pas avec
+> un clavier USB "pur" sans ce repli (nécessiterait un vrai contrôleur
+> hôte USB, hors de portée de ce module).
 
 | Fonction | Rôle |
 |---|---|
 | `ps2_read_byte` | Lit UNE trame PS/2 complète (11 bits : start/8 données/parité impaire/stop), **bloque** jusqu'à réception. Sortie : `AL` = scan code brut (Set 2), `CF`=1 si erreur de parité/stop |
 | `ps2_wait_falling_edge` | Attend un front descendant de `CLOCK`, retourne l'état du Port B à cet instant (pour lire `DATA`) |
+| `ps2_get_char` | **Bloque** jusqu'à l'appui d'une touche reconnue (voir `ps2_keymap`) — consomme correctement les relâchements (`0xF0`) et touches étendues (`0xE0`, ex. flèches), ignorées. Sortie : `AL` = caractère ASCII |
+| `ps2_scancode_to_char` / `ps2_keymap` | Traduit un scan code Set 2 en caractère ASCII (chiffres `0-9`, lettres `A-F`, Entrée, Retour arrière, Échap) via une table `(scan code, caractère)` |
+| `ps2_hex_digit_value` | Caractère ASCII (`'0'-'9'`/`'A'-'F'`) → valeur `0-15`, `CF`=1 si non hexadécimal |
+| `ps2_read_hex` | Lit `CL` chiffres hexadécimaux au clavier, avec écho (UART **et** LCD) de chaque chiffre — utilisée par `edit_ram_action`. Pas de gestion du retour arrière (voir Directives.md) |
 
-Ne traduit pas encore les scan codes en caractères (Scan Code Set 2 :
-un octet pour une touche simple, préfixe `0xE0` pour les touches
-étendues, `0xF0` pour un relâchement) — voir `TEST_PS2` ci-dessous
-pour le harnais de test, et Directives.md pour la suite prévue.
+### Diagnostic bas niveau conditionnel (`TEST_PS2`)
 
-⚠️ **`ps2_read_byte` exige que le Port B soit configuré en ENTRÉE** —
-ce n'est le cas que lorsque `TEST_PS2` est actif (voir `MASQUE_PIO`
-dans `include/hardware.inc`). L'appeler en dehors de ce contexte
-relirait le verrou de sortie du 8255, pas l'état réel des broches.
-
-### Test de mise en service conditionnel (`TEST_PS2`)
-
-Comme `TEST_I2C_DUMP`, une directive `%define TEST_PS2`,
-**commentée par défaut**, active un harnais de test — mais celui-ci
-**remplace tout le POST normal** par une boucle infinie qui affiche
-sur l'UART le scan code brut de chaque trame reçue du clavier :
+Une directive `%define TEST_PS2`, **commentée par défaut**,
+**remplace le menu interactif** par une boucle infinie qui affiche sur
+l'UART le scan code **brut** (sans traduction) de chaque trame reçue :
 
 ```
 === Test PS/2 (TEST_PS2): en attente de frappes clavier (Set 2, brut) ===
@@ -373,17 +368,68 @@ Scan code recu: 0xF0
 Scan code recu: 0x1C
 ```
 
-Sert uniquement à valider le câblage/protocole avant d'écrire un vrai
-pilote (traduction scan code → caractère). Bascule aussi le Port B du
-8255 en entrée (`MASQUE_PIO`) — **aucun autre changement** quand la
-directive reste désactivée (comportement par défaut inchangé, vérifié
-octet pour octet : `MASQUE_PIO` reste `80h`).
+Utile pour vérifier le câblage/protocole indépendamment de la couche
+de traduction (`ps2_get_char`) qu'utilise le menu. `MASQUE_PIO` (Port
+B en entrée) est maintenant permanent, donc cette directive ne change
+plus que le choix menu-interactif / diagnostic-brut au démarrage.
 
 Activation (mêmes deux façons que `TEST_I2C_DUMP`) :
 
 ```sh
 nasm -f bin -d TEST_PS2 solution-01.asm -o solution-01.bin
 ```
+
+## Menu interactif
+
+Affiché après le splash, sur l'UART **et** le LCD parallèle (une
+option par ligne — 4 lignes, 4 options). Remplace le POST automatique
+des versions précédentes : chaque action est déclenchée par une touche
+(clavier PS/2), et le menu se redessine après chaque action.
+
+**Menu principal** :
+
+```
+1) Test RAM
+2) Dump memory
+3) LED Show on PC
+4) Edit RAM
+```
+
+**Menu "Dump memory"** (option 2 du menu principal) :
+
+```
+1) Dump ROM
+2) Dump first 4k RAM
+3) Edit RAM
+9) Home menu
+```
+
+**Edit RAM** (option 4 du menu principal, ou option 3 du menu Dump —
+même action `edit_ram_action` dans les deux cas) : invite deux
+saisies hexadécimales au clavier, avec écho UART+LCD, puis écrit
+l'octet en RAM (segment `0000h`, aucune vérification de bornes) :
+
+```
+Address: 0x0000
+Value:   0x00
+```
+
+| Option | Action | Détail |
+|---|---|---|
+| Test RAM | `test_ram` | Inchangée — teste la RAM 128 Ko, rapporte via UART+LCD |
+| Dump ROM | `rom_dump` | Inchangée — dump hex+ASCII des 4 premiers Ko de la ROM |
+| Dump first 4k RAM | `ram_dump_4k` (nouveau) | Réutilise `dump_line` telle quelle, pointée sur la RAM (segment `0000h`) plutôt que la ROM |
+| LED Show on PC | `effet1` | Inchangée — chenillard sur le Port C |
+| Edit RAM | `edit_ram_action` (nouveau) | Saisie adresse (4 chiffres) + valeur (2 chiffres) via `ps2_read_hex`, écrit l'octet en RAM |
+| Home menu | — | Retour au menu principal depuis le menu Dump |
+
+⚠️ **Limitations connues du premier jalon** (voir Directives.md) :
+pas de retour arrière pendant la saisie hexadécimale (une touche
+erronée s'ignore, mais ne peut pas être corrigée en cours de champ —
+recommencer l'opération depuis le menu) ; la ligne 4 du LCD pendant
+`Dump first 4k RAM` affiche encore "`/257`" (dénominateur du dump ROM,
+qui a 257 lignes) même si le dump RAM n'en a que 256 — cosmétique
+seulement.
 
 ## Outils nécessaires pour produire le `.bin` final
 

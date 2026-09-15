@@ -64,7 +64,7 @@ $(UTILS_BIN): lib/utils.asm
 $(LCD_I2C_BIN): lib/lcd_i2c.asm lib/lcd.asm lib/common.asm include/hardware.inc | lib/bin
 	$(NASM) $(NASMFLAGS) lib/lcd_i2c.asm -o $(LCD_I2C_BIN)
 
-$(PS2_BIN): lib/ps2.asm include/hardware.inc | lib/bin
+$(PS2_BIN): lib/ps2.asm lib/lcd.asm lib/uart.asm lib/common.asm include/hardware.inc | lib/bin
 	$(NASM) $(NASMFLAGS) lib/ps2.asm -o $(PS2_BIN)
 
 lib/bin:
