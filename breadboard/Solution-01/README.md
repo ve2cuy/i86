@@ -341,6 +341,9 @@ est pressée/relâchée — donc `ps2_read_byte` doit tourner sans
 interruption logicielle du début à la fin d'une trame, sous peine de
 rater un front d'horloge.
 
+> **Câblage USB → PS/2** (pour un clavier/câble USB adapté en PS/2) :
+> `VBUS`→`+5V`, `D−`→`Data`, `D+`→`Clock`, `GND`→`GND`.
+
 | Fonction | Rôle |
 |---|---|
 | `ps2_read_byte` | Lit UNE trame PS/2 complète (11 bits : start/8 données/parité impaire/stop), **bloque** jusqu'à réception. Sortie : `AL` = scan code brut (Set 2), `CF`=1 si erreur de parité/stop |
