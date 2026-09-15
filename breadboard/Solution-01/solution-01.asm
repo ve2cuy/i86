@@ -141,6 +141,27 @@ start:
                                  ; a CHAQUE cycle
         sti
 
+        ; --- Efface TOUTE la RAM (128K: segments 0000h et 1000h) a 0,
+        ; AVANT quoi que ce soit d'autre - elimine le "garbage"
+        ; residuel visible dans les dumps memoire (RAM statique sans
+        ; valeur garantie a la mise sous tension). ECRIT EN LIGNE (pas
+        ; de CALL): le segment 1000h contient la pile deja active
+        ; (SS/SP ci-dessus) - un retour d'appel qui s'y trouverait
+        ; serait efface par erreur. Sans risque ICI puisque rien n'a
+        ; encore ete empile a ce stade. AX reste a 0 (valeur de
+        ; remplissage de "rep stosw") tout du long - CX sert de
+        ; registre de transfert pour le 2e segment. ---
+        xor     ax, ax
+        mov     es, ax
+        xor     di, di
+        mov     cx, 8000h       ; 32768 mots = 65536 octets (segment 0000h)
+        rep     stosw
+        mov     cx, STACK_SEG   ; CX = transfert (AX doit rester a 0)
+        mov     es, cx
+        xor     di, di
+        mov     cx, 8000h       ; segment 1000h (STACK_SEG/VAR_SEG)
+        rep     stosw
+
         mov     ax, cs
         mov     ds, ax          ; DS = CS en PERMANENCE: tous les messages et
                                  ; la table hexadecimale vivent dans la ROM.
@@ -163,8 +184,13 @@ start:
         mov     [es:di], al
         out     PORTA, al
 
-        call    setup_bios_interrupts  ; peuple l'IVT pour INT 10h/16h
-                                         ; ("esprit BIOS" - voir plus bas)
+        call    init_ivt_not_implemented  ; peuple les 256 entrees de l'IVT
+                                            ; avec un gestionnaire generique
+                                            ; ("non implementee" - voir plus
+                                            ; bas), AVANT nos propres vecteurs
+        call    setup_bios_interrupts  ; installe ENSUITE INT 10h/16h
+                                         ; ("esprit BIOS" - voir plus bas),
+                                         ; par-dessus les 2 entrees concernees
 
 %ifdef TEST_PS2
         ; --- Test PS/2 (TEST_PS2): boucle infinie qui affiche sur
@@ -1687,6 +1713,58 @@ delay2:
 ;*** END delay
 
 ; ============================================================
+; init_ivt_not_implemented
+; Peuple les 256 entrees de l'IVT (INT 00h-FFh, segment 0000h) avec
+; int_not_implemented (voir plus bas) - AVANT nos propres vecteurs
+; (setup_bios_interrupts remplace ensuite les entrees INT 10h/16h
+; uniquement). Elimine tout "garbage" residuel dans l'IVT (visible via
+; Dump memory) et donne un diagnostic clair sur l'UART si du code
+; appelle par erreur une interruption non geree. Appelee une seule
+; fois au demarrage (voir start:).
+; ============================================================
+init_ivt_not_implemented:
+        push    ax
+        push    cx
+        push    di
+        push    es
+
+        xor     ax, ax
+        mov     es, ax                  ; ES = 0000h (IVT)
+        xor     di, di
+        mov     cx, 100h                ; 256 entrees
+.next_entry:
+        mov     word [es:di], int_not_implemented
+        mov     word [es:di+2], cs
+        add     di, 4
+        loop    .next_entry
+
+        pop     es
+        pop     di
+        pop     cx
+        pop     ax
+        ret
+
+; ============================================================
+; int_not_implemented
+; Gestionnaire generique installe par defaut a TOUTES les entrees de
+; l'IVT (voir init_ivt_not_implemented ci-dessus) - affiche un message
+; sur l'UART et retourne (IRET). Remplace par un gestionnaire
+; specifique pour INT 10h/16h (voir setup_bios_interrupts plus bas).
+; Appel direct a uart_tx_string (pas la macro "print", qui passe par
+; INT 10h) - ce gestionnaire doit rester independant de tout ce qui
+; pourrait lui-meme etre en cause si une interruption inattendue
+; survient.
+; ============================================================
+int_not_implemented:
+        push    ax
+        push    si
+        mov     si, txt_int_non_implementee
+        call    uart_tx_string
+        pop     si
+        pop     ax
+        iret
+
+; ============================================================
 ; setup_bios_interrupts
 ; Peuple l'IVT (segment 0000h, RAM) pour INT 10h (affichage) et
 ; INT 16h (clavier) - chaque entree est un pointeur FAR (offset puis
@@ -2125,6 +2203,10 @@ txt_dump_fin:            db      27,'[32m','*** Dump termine ***',27,'[0m',13,10
 txt_dump_invalid_range: db      27,'[31m','*** Adresse de fin < adresse de depart - dump annule ***',27,'[0m',13,10,13,10,0
 
 txt_dump_interrupted:   db      27,'[33m','*** Dump interrompu (Echap) ***',27,'[0m',13,10,13,10,0
+
+; ---- gestionnaire par defaut de l'IVT (voir init_ivt_not_implemented/
+; ---- int_not_implemented) ----
+txt_int_non_implementee: db     27,'[31m','*** Interruption non implementee ***',27,'[0m',13,10,0
 
 txt_auteur:             db      '8088 sur breadboard version 2026',13,10
                         db      'Par Alain Boudreault, aka VE2CUY',13,10

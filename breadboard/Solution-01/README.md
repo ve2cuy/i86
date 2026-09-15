@@ -391,8 +391,24 @@ projet (2 LCD HD44780 4×20, pas de mémoire vidéo ni de VGA ; clavier
 PS/2 en polling pur, pas de tampon). `INT n`/`IRET` sont purement
 logiciels sur le 8088 — **aucun 8259 (PIC) requis**, contrairement aux
 interruptions matérielles (IRQ), toujours mises de côté (voir
-Directives.md). L'IVT (segment `0000h`, RAM) est peuplée une seule
-fois au démarrage par `setup_bios_interrupts`, avant toute utilisation.
+Directives.md).
+
+Au démarrage (`start:`), dans l'ordre :
+1. **Toute la RAM (128 Ko) est effacée à 0** — segments `0000h` et
+   `1000h`, écrit en ligne (`rep stosw`, pas de `CALL`) avant même
+   l'initialisation de la pile utilisable, pour éliminer le contenu
+   résiduel ("garbage") de la RAM statique à la mise sous tension —
+   visible sinon dans un `Dump memory` de l'IVT ou d'ailleurs.
+2. **Les 256 entrées de l'IVT** (`INT 00h`-`FFh`) sont peuplées avec
+   `int_not_implemented` (`init_ivt_not_implemented`) — un gestionnaire
+   générique qui affiche `*** Interruption non implementee ***` sur
+   l'UART et retourne (`IRET`). Un appel accidentel à une interruption
+   non gérée produit donc un diagnostic clair plutôt que de sauter
+   dans du contenu résiduel de l'IVT.
+3. **`setup_bios_interrupts`** installe *ensuite* nos propres
+   gestionnaires (`int10h_handler`/`int16h_handler`) — remplaçant
+   seulement les entrées `INT 10h`/`16h`, les 254 autres restant sur
+   `int_not_implemented`.
 
 ### Initialisation de l'IVT : calcul d'adresse
 
