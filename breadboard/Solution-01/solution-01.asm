@@ -472,6 +472,17 @@ mem_calc_physical:
 ; d'erreur est affiche (UART, en rouge) et la fonction retourne sans
 ; rien dumper.
 ;
+; Interruption au clavier: la touche Echap, verifiee de facon NON
+; BLOQUANTE avant chaque ligne (CLOCK/PB0 est HAUT au repos - un
+; "IN AL,PORTB" suffit a detecter qu'une trame est en cours, sans
+; ralentir le dump quand aucune touche n'est pressee), interrompt le
+; dump et retourne au menu. Best-effort: une touche pressee et
+; relachee tres brievement PENDANT l'impression d'une ligne (qui peut
+; prendre plusieurs dizaines de ms sur l'UART logiciel a 9600 bauds)
+; peut echapper a la verification suivante si elle est deja terminee
+; a ce moment-la - appuyer de nouveau sur Echap si le dump ne s'arrete
+; pas immediatement.
+;
 ; Limitation connue (affichage seulement): la ligne 4 du LCD affiche
 ; desormais "Ligne: NNN" (numero de la ligne courante, SANS total -
 ; contrairement a l'ancien "NNN/257" fixe, devenu incorrect des que
@@ -651,6 +662,22 @@ dump_memory_action:
         mov     bx, 1                            ; BX = numero de ligne courant (1-based,
                                                   ; pour "Ligne: NNN" sur le LCD)
 .line_loop:
+        ; --- interruption au clavier (Echap): verification NON
+        ; BLOQUANTE avant chaque ligne - CLOCK (PB0) est HAUT au repos
+        ; (voir lib/ps2.asm), donc un simple "IN AL,PORTB" suffit a
+        ; detecter qu'une trame est en cours SANS ralentir le dump
+        ; quand aucune touche n'est pressee (cas normal). Si une trame
+        ; est en cours, ps2_get_char la lit entierement (bloquant,
+        ; bref: <2ms) et se resynchronise lui-meme au besoin. ---
+        in      al, PORTB
+        test    al, PS2_CLOCK
+        jnz     .no_key                         ; CLOCK haut (repos) - rien a lire
+        push    bx                              ; ps2_get_char detruit BX (numero de
+        call    ps2_get_char                    ; ligne courant, doit survivre) - voir
+        pop     bx                              ; son en-tete
+        cmp     al, 27                          ; Echap ?
+        je      .interrupted
+.no_key:
         push    di
         call    dump_line                       ; affiche ES:DI (UART+LCD), avance DI de 16
         pop     dx                               ; DX = DI D'AVANT l'appel
@@ -676,6 +703,11 @@ dump_memory_action:
         jne     .line_loop
 
         call    msg_dump_fin
+        jmp     .done
+
+.interrupted:
+        mov     si, txt_dump_interrupted
+        call    uart_tx_string
         jmp     .done
 
 .invalid_range:
@@ -1688,6 +1720,8 @@ txt_dump_banniere3:      db      ' ===',27,'[0m',13,10,0
 txt_dump_fin:            db      27,'[32m','*** Dump termine ***',27,'[0m',13,10,13,10,0
 
 txt_dump_invalid_range: db      27,'[31m','*** Adresse de fin < adresse de depart - dump annule ***',27,'[0m',13,10,13,10,0
+
+txt_dump_interrupted:   db      27,'[33m','*** Dump interrompu (Echap) ***',27,'[0m',13,10,13,10,0
 
 txt_auteur:             db      '8088 sur breadboard version 2026',13,10
                         db      'Par Alain Boudreault, aka VE2CUY',13,10

@@ -429,6 +429,17 @@ frontière de segment. Si l'adresse de fin est antérieure à celle de
 départ, la plage est rejetée (message d'erreur UART, rien n'est
 dumpé).
 
+La touche **Échap** interrompt un dump en cours et retourne
+immédiatement au menu Dump memory. Vérifiée de façon **non bloquante**
+avant chaque ligne (`CLOCK`/`PB0` est haut au repos — un simple
+`IN AL,PORTB` détecte qu'une trame est en cours sans ralentir le dump
+tant qu'aucune touche n'est pressée) : effort raisonnable plutôt que
+garantie absolue — une touche pressée et relâchée très brièvement
+pendant l'impression d'une ligne (qui peut prendre plusieurs dizaines
+de ms sur l'UART logiciel à 9600 bauds) peut échapper à la
+vérification suivante ; appuyer de nouveau sur Échap si le dump ne
+s'arrête pas immédiatement.
+
 **Edit RAM** (option 4 du menu principal, ou option 2 du menu Dump —
 même action `edit_ram_action` dans les deux cas) : éditeur de RAM
 interactif. Demande d'abord une adresse de départ (avec retour
