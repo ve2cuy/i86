@@ -360,9 +360,21 @@ ps2_hex_digit_value:
 ;         de depart du champ (0-127, sans le bit de commande).
 ; Sortie: BX = valeur entree (chiffres accumules, MSB en premier).
 ; Detruit: AX, CX, DX (BX est la sortie). Jamais SI/DI/ES/BP.
+;
+; IMPORTANT: l'accumulateur interne vit dans SI, PAS BX - depuis que
+; ps2_get_char expose le scan code brut en BH (voir son en-tete),
+; BH est ecrase a CHAQUE appel, ce qui corromprait un accumulateur
+; multi-chiffres loge dans BX. SI, lui, n'est jamais touche par
+; ps2_get_char. Bug confirme sur le materiel reel avant ce correctif:
+; saisir "0000" donnait "5000" (045h, le scan code Set 2 de '0',
+; ecrasait BH -> BX=4500h apres le 1er chiffre -> shl bx,4 = 45000h,
+; tronque a 16 bits = 5000h - voir Directives.md).
 ; ============================================================
 ps2_read_hex_editable:
-        xor     bx, bx
+        push    si              ; SI = accumulateur interne - restaure la
+                                 ; valeur d'origine de l'appelant avant le
+                                 ; retour (BX reste la SORTIE documentee)
+        xor     si, si
         mov     ch, cl          ; CH = nombre TOTAL de chiffres a lire (fixe)
         xor     dh, dh          ; DH = nombre de chiffres saisis jusqu'ici
 .next_key:
@@ -376,8 +388,11 @@ ps2_read_hex_editable:
         mov     dl, al          ; DL = valeur de ce chiffre (0-15), survit
                                  ; aux 2 echos ci-dessous
         mov     cl, 4
-        shl     bx, cl
-        or      bl, dl
+        shl     si, cl
+        push    dx              ; DH(compteur)/DL(valeur) sauvegardes ensemble
+        mov     dh, 0           ; DH=0 temporairement (les 4 bits bas de SI
+        add     si, dx          ; sont a 0 apres le decalage - addition = OR)
+        pop     dx              ; restaure DH(compteur)/DL(valeur)
         mov     al, dl
         call    uart_tx_hex_nibble
         mov     al, dl
@@ -385,13 +400,15 @@ ps2_read_hex_editable:
         inc     dh
         cmp     dh, ch
         jb      .next_key
+        mov     bx, si          ; BX = valeur finale (sortie documentee)
+        pop     si              ; restaure le SI de l'appelant
         ret
 .backspace:
         cmp     dh, 0
         je      .next_key       ; rien a effacer - ignore
         dec     dh
         mov     cl, 4           ; efface le dernier chiffre de la valeur
-        shr     bx, cl          ; accumulee (division par 16)
+        shr     si, cl          ; accumulee (division par 16)
         mov     al, 8           ; efface visuellement sur l'UART (backspace,
         call    uart_tx_byte    ; espace, backspace)
         mov     al, ' '
@@ -431,9 +448,18 @@ ps2_read_hex_editable:
 ;         tape (valeur a ecrire), CF=1 si Entree a ete pressee sans
 ;         aucune saisie (BX indefini - rien a ecrire).
 ; Detruit: AX, CX, DX (BX est la sortie). Jamais SI/DI/ES/BP.
+;
+; IMPORTANT: l'accumulateur interne vit dans SI, PAS BX - meme raison
+; et meme correctif que ps2_read_hex_editable (voir son en-tete):
+; ps2_get_char ecrase BH (scan code brut) a chaque appel, ce qui
+; corromprait un accumulateur loge dans BX.
 ; ============================================================
 ps2_edit_byte_value:
-        xor     bx, bx
+        push    si              ; SI = accumulateur interne - restaure la
+                                 ; valeur d'origine de l'appelant avant
+                                 ; chaque retour (BX reste la SORTIE
+                                 ; documentee)
+        xor     si, si
         xor     dh, dh          ; DH = nombre de chiffres saisis (0-2)
         jmp     .have_key       ; traite d'abord le caractere deja lu par
                                  ; l'appelant, avant de lire les suivants
@@ -450,8 +476,11 @@ ps2_edit_byte_value:
         jae     .next_key       ; deja 2 chiffres - ignore
         mov     dl, al
         mov     cl, 4
-        shl     bx, cl
-        or      bl, dl
+        shl     si, cl
+        push    dx              ; DH(compteur)/DL(valeur) sauvegardes ensemble
+        mov     dh, 0           ; DH=0 temporairement (les 4 bits bas de SI
+        add     si, dx          ; sont a 0 apres le decalage - addition = OR)
+        pop     dx              ; restaure DH(compteur)/DL(valeur)
         mov     al, dl
         call    uart_tx_hex_nibble
         mov     al, dl
@@ -463,7 +492,7 @@ ps2_edit_byte_value:
         je      .next_key
         dec     dh
         mov     cl, 4
-        shr     bx, cl
+        shr     si, cl
         mov     al, 8
         call    uart_tx_byte
         mov     al, ' '
@@ -484,9 +513,13 @@ ps2_edit_byte_value:
 .commit:
         cmp     dh, 0
         je      .empty
+        mov     bx, si          ; BX = valeur finale (sortie documentee)
+        pop     si              ; restaure le SI de l'appelant
         clc
         ret
 .empty:
+        pop     si              ; restaure le SI de l'appelant (BX indefini,
+                                 ; comme documente - rien a ecrire)
         stc
         ret
 
