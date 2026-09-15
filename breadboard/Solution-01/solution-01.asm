@@ -192,19 +192,26 @@ start:
         jmp     .ps2_loop
 %endif
 
-        ; --- Test du LCD I2C (PCF8574 0x27, SDA=PA5, SCL=PA0): une
-        ; seule fois au demarrage. PA0 est partagee avec D4 du LCD
-        ; PARALLELE mais sans risque (voir lib/lcd_i2c.asm) - donc
-        ; PAS besoin d'etre place avant lcd_init comme le serait un
-        ; partage avec E; place ici simplement pour rester groupe
+        ; --- LCD I2C (PCF8574 0x27, SDA=PA5, SCL=PA0): affiche la
+        ; version de l'application et les parametres de la connexion
+        ; UART, une seule fois au demarrage. PA0 est partagee avec D4
+        ; du LCD PARALLELE mais sans risque (voir lib/lcd_i2c.asm) -
+        ; donc PAS besoin d'etre place avant lcd_init comme le serait
+        ; un partage avec E; place ici simplement pour rester groupe
         ; avec le reste de l'init materielle ---
         call    i2c_lcd_init
-        mov     si, i2c_txt_hello
-        call    i2c_lcd_print   ; DDRAM deja en ligne 1 (Clear Display dans i2c_lcd_init)
+        mov     si, lcd_txt_splash_l1          ; "Breadboard 8088"
+        i2c_lcd_show LCD_LINE1
+        mov     si, lcd_txt_splash_l2          ; "Version 1.0"
+        i2c_lcd_show LCD_LINE2
+        mov     si, i2c_txt_uart_params        ; "UART: 9600 8N1"
+        i2c_lcd_show LCD_LINE3
+        mov     si, lcd_txt_splash_l4          ; "(c) VE2CUY 2026"
+        i2c_lcd_show LCD_LINE4
 
         ; --- Ecran de demarrage: affiche une seule fois (pas a chaque
         ; cycle de .ici, contrairement au reste de l'affichage LCD),
-        ; pendant 3 secondes, avant d'entrer dans la boucle principale ---
+        ; pendant 1 seconde, avant d'entrer dans la boucle principale ---
         call    lcd_init
         mov     si, lcd_txt_splash_l1
         lcd_show LCD_LINE1
@@ -214,7 +221,7 @@ start:
         lcd_show LCD_LINE3
         mov     si, lcd_txt_splash_l4
         lcd_show LCD_LINE4
-        delay_ms (3*SECONDE)
+        delay_ms (1*SECONDE)
 
         ; --- Bandeau d'identification: affiche une seule fois, avant
         ; d'entrer dans le menu (remplace l'ancienne boucle POST
@@ -1753,8 +1760,11 @@ txt_dump_end_prefix:    db      'End:   0x', 0
 txt_dump_seg_off_sep:   db      ':0x', 0
 
 ; ---- texte du LCD I2C (PCF8574 0x27) - pas de padding, pas de
-; ---- largeur fixe imposee comme sur le LCD parallele ----
-i2c_txt_hello:          db      'Hello World', 0
+; ---- largeur fixe imposee comme sur le LCD parallele. Les lignes
+; ---- 1/2/4 de l'ecran de demarrage I2C reutilisent directement
+; ---- lcd_txt_splash_l1/l2/l4 (voir start:) - seule la ligne 3 (les
+; ---- parametres de connexion UART) est specifique a l'I2C ----
+i2c_txt_uart_params:    db      'UART: 9600 8N1', 0
 
 ; ---- textes LCD (20 caracteres, complete automatiquement par des
 ; ---- espaces via "times" - afficheur 4x20) ----

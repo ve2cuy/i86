@@ -3,10 +3,10 @@
 Firmware ROM pour un ordinateur 8088/8086 assemblé sur breadboard par
 Alain Boudreault (VE2CUY). Au démarrage, la carte :
 
-1. affiche "Hello World" sur un second LCD, piloté en I2C logiciel
-   (bit-bang), en guise de test de cette fonctionnalité ;
+1. affiche la version de l'application et les paramètres de la
+   connexion UART sur un second LCD, piloté en I2C logiciel (bit-bang) ;
 2. affiche un écran de démarrage sur le LCD parallèle 4×20 pendant
-   3 secondes ;
+   1 seconde ;
 3. affiche un **menu interactif** (UART + LCD), piloté au clavier
    PS/2, qui reste le comportement normal de la carte tant qu'elle
    est sous tension — voir [Menu interactif](#menu-interactif)
