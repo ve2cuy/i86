@@ -1127,17 +1127,21 @@ edit_ram_draw_grid:
 .row_not2:
         lcd_goto LCD_LINE4
 .row_go:
-        ; --- adresse REELLE de cette ligne (EDIT_BASE_OFF + DI) ---
+        ; --- adresse REELLE de cette ligne (EDIT_BASE_OFF + DI) - UART
+        ; SEULEMENT. PAS sur le LCD: "SSSS: " (6) + 6 cases "XX " (18)
+        ; = 24 caracteres deborderait la ligne de 20 caracteres du LCD
+        ; de 4 - un debordement qui, sur cet afficheur 4x20 "type A",
+        ; se retrouve dans la ligne PAIREE (LCD_LINE1<->LCD_LINE3,
+        ; LCD_LINE2<->LCD_LINE4 partagent le meme bloc de 40 octets de
+        ; DDRAM) et corromprait le DEBUT de cette ligne pairee une
+        ; fois qu'elle est dessinee a son tour (bug trouve sur le
+        ; materiel reel: le premier caractere de l'adresse des lignes
+        ; 1 et 2 disparaissait - voir Directives.md). Le LCD garde donc
+        ; le format compact d'origine (6 cases "XX " = 18 caracteres,
+        ; sans etiquette d'adresse par ligne). ---
         mov     bp, EDIT_BASE_OFF
         mov     ax, [bp]
         add     ax, di                  ; AX = adresse reelle de cette ligne
-        mov     dx, ax                  ; DX = copie (survit aux impressions)
-        call    lcd_tx_hex_word         ; affiche sur le LCD (detruit AX)
-        mov     al, ':'
-        call    lcd_data
-        mov     al, ' '
-        call    lcd_data
-        mov     ax, dx                  ; restaure l'adresse pour l'UART
         call    uart_tx_hex_word
         mov     al, ':'
         call    uart_tx_byte
@@ -1213,7 +1217,10 @@ edit_ram_draw_grid:
 ; edit_ram_cell_ddram
 ; Calcule l'adresse DDRAM (SANS le bit de commande) de la case
 ; COURANTE (EDIT_CURSOR_OFF, ramenee a sa position VISIBLE via
-; EDIT_WINDOW_ROW_OFF) - "XX " = 3 caracteres par cellule sur le LCD.
+; EDIT_WINDOW_ROW_OFF) - "XX " = 3 caracteres par cellule sur le LCD,
+; SANS etiquette d'adresse (voir edit_ram_draw_grid: l'adresse par
+; ligne n'est affichee que sur l'UART, pas sur le LCD - deborderait la
+; largeur de 20 caracteres, voir son en-tete).
 ; Sortie: AH = adresse DDRAM (0-127).
 ; ============================================================
 edit_ram_cell_ddram:

@@ -651,12 +651,25 @@ flèches **haut/bas font défiler** la fenêtre visible d'une ligne dès
 que le curseur en sortirait — contrairement au premier jalon, limité à
 la grille initialement affichée.
 
+Sortie UART (avec l'adresse réelle de chaque ligne — absente du LCD,
+voir plus bas) :
+
 ```
 0400: 00 01 02 03 04 05
 0406: 06 07 08 09 0A 0B
 040C: 0C 0D 0E 0F 10 11
 0412: 12 13 14 15 16 17
 ```
+
+Sur le LCD, chaque ligne n'affiche QUE la grille compacte (`XX XX XX
+XX XX XX` = 18 caractères) — **sans** l'adresse par ligne : l'ajouter
+ferait déborder les 20 caractères de la ligne de 4, et ce débordement,
+sur cet afficheur 4×20 « type A » (`LCD_LINE1`↔`LCD_LINE3` et
+`LCD_LINE2`↔`LCD_LINE4` partagent chacun un même bloc de 40 octets de
+DDRAM), corromprait le début de la ligne appairée dessinée juste après
+— bug trouvé sur le matériel réel (le premier caractère de l'adresse
+des lignes 1 et 2 disparaissait) et corrigé en retirant l'étiquette
+d'adresse du LCD (gardée sur l'UART, où la largeur n'est pas limitée).
 
 | Touche | Effet |
 |---|---|
