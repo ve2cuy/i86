@@ -393,6 +393,48 @@ interruptions matérielles (IRQ), toujours mises de côté (voir
 Directives.md). L'IVT (segment `0000h`, RAM) est peuplée une seule
 fois au démarrage par `setup_bios_interrupts`, avant toute utilisation.
 
+### Initialisation de l'IVT : calcul d'adresse
+
+Chaque entrée de l'IVT fait **4 octets** — pas parce qu'une adresse y
+est stockée sur 20 bits d'un bloc, mais parce que c'est un **pointeur
+FAR classique** : 2 octets d'**offset** + 2 octets de **segment**,
+stockés séparément (offset d'abord). `setup_bios_interrupts` les
+écrit ainsi pour `INT 10h`/`INT 16h` :
+
+```asm
+mov word [es:10h*4],   int10h_handler   ; offset (2 octets, a N*4)
+mov word [es:10h*4+2], cs               ; segment (2 octets, a N*4+2)
+```
+
+Avec 256 numéros d'interruption possibles (`INT 00h`-`FFh`) × 4 octets
+chacun = 1024 octets, exactement le segment `0000h:0000h`-`0000h:03FFh`
+(déjà réservé sur ce montage, protégé par `cli` pendant `test_ram`).
+`INT 10h` a donc son entrée à l'offset `10h×4 = 40h`, `INT 16h` à
+`16h×4 = 58h`.
+
+Les deux moitiés de ce pointeur ne sont pas obtenues de la même
+façon :
+- **L'offset** (`int10h_handler`) est résolu par **NASM à
+  l'assemblage** — pas calculé par le programme à l'exécution. Ce
+  projet assemble en `-f bin` à plat (`ORG 0000h`), donc
+  `int10h_handler` est une constante 16 bits connue d'avance :
+  l'assembleur sait exactement à quel octet du binaire correspond
+  cette étiquette.
+- **Le segment** (`cs`) est lu par le programme **à l'exécution**, via
+  le registre `CS` du CPU — qui vaut `C000h` sur ce montage (fixé par
+  le vecteur de reset matériel, `jmp 0C000h:0000h`).
+
+Le programme place donc un couple `offset:segment`, **pas** une
+adresse physique 20 bits pré-combinée. C'est le **CPU**, au moment où
+il exécute `INT 10h`/`INT 16h` plus tard, qui relit ces deux mots
+depuis l'IVT et calcule `segment×16 + offset` pour obtenir l'adresse
+physique réelle où sauter — la même formule qu'au piège `FFFF:FFF0`
+décrit plus bas dans [Menu interactif](#menu-interactif) (Dump
+memory). Cette distinction est utile : `int10h_handler` pourrait vivre n'importe où dans le segment
+`C000h` sans recalcul manuel (l'assembleur/linker s'en charge), et si
+le code tournait un jour depuis un autre segment que `C000h`, il
+suffirait que `CS` soit différent au moment de `setup_bios_interrupts`.
+
 **`INT 10h` — affichage** (`int10h_handler`) :
 
 | `AH` | Fonction | Registres |
