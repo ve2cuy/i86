@@ -28,7 +28,9 @@ tension.
 - ROM 256 Ko, mappée à l'adresse physique `C0000h-FFFFFh`
 - RAM statique 128 Ko
 - Un 8255 (PIO) : Port A entièrement occupé (LCD parallèle, UART
-  logiciel et LCD I2C logiciel), Port C utilisé pour l'animation du POST
+  logiciel et LCD I2C logiciel), Port C utilisé pour l'animation du
+  POST, Port B libre (réservé au clavier PS/2, voir plus bas —
+  `TEST_PS2` uniquement)
 - Câblage du Port A (voir l'en-tête de `solution-01.asm`) — **les 8
   bits sont utilisés** :
   - `PA0` → `D4` du LCD parallèle **ET** `SCL` du LCD I2C (broche
@@ -43,6 +45,8 @@ tension.
 - LCD parallèle HD44780 4 lignes × 20 caractères, piloté en mode 4 bits
 - LCD I2C HD44780 (derrière un expandeur PCF8574, adresse `0x27` —
   "backpack" standard), piloté en I2C logiciel
+- Clavier PS/2 (optionnel, `TEST_PS2` uniquement) : `PB0` = `CLOCK`,
+  `PB1` = `DATA`, résistances de tirage externes requises
 
 Comme le LCD parallèle, l'UART et le LCD I2C se partagent le même
 octet matériel (le 8255 en mode 0 n'adresse pas le Port A bit à bit),
@@ -93,6 +97,7 @@ flowchart TD
     end
 
     LED["Port C: chenillard (animation POST)"]
+    PS2["Clavier PS/2 (TEST_PS2 uniquement)\nPB0=CLOCK, PB1=DATA - Port B en entree"]
 
     AB --> A19G
     A19G --> NOTA19
@@ -111,6 +116,7 @@ flowchart TD
     PIO --> UART
     PIO --> I2CLCD
     PIO --> LED
+    PIO --> PS2
 ```
 
 ⚠️ Note : la sélection de la ROM ne dépend que de `A19` (pas de
@@ -145,12 +151,13 @@ Solution-01/
     ├── uart.asm           Toutes les procédures de transmission UART
     ├── utils.asm          delay_ms_proc (routine derrière la macro)
     ├── lcd_i2c.asm        Accès I2C logiciel (bit-bang) au LCD PCF8574 0x27
-    └── bin/                (généré) lcd.bin, uart.bin, lcd_i2c.bin
+    ├── ps2.asm            Lecture d'un clavier PS/2 en polling (TEST_PS2)
+    └── bin/                (généré) lcd.bin, uart.bin, lcd_i2c.bin, ps2.bin
 ```
 
 Fichiers générés par `make` (non versionnés, voir `.gitignore`) :
 `solution-01.bin`, `lib/bin/lcd.bin`, `lib/bin/uart.bin`,
-`lib/utils.bin`, `lib/bin/lcd_i2c.bin`, `build/check/*.bin`.
+`lib/utils.bin`, `lib/bin/lcd_i2c.bin`, `lib/bin/ps2.bin`, `build/check/*.bin`.
 
 **Règle importante** : tous les `%include` du projet sont écrits comme
 des chemins relatifs à **cette racine** (`Solution-01/`), jamais
@@ -323,6 +330,58 @@ commentaires "TEST_I2C_DUMP" près du haut du fichier (avec
 permanente pour tout `make`/`nasm` lancé sur ce fichier, sans avoir à
 répéter le flag `-d` à chaque fois.
 
+## Fonctions d'accès au clavier PS/2 (`lib/ps2.asm`)
+
+Premier jalon de mise en service d'un clavier PS/2 : lecture d'une
+trame brute en **polling pur** (aucune interruption — le projet n'en
+utilise pas encore) sur le Port B du 8255 (`PB0`=`CLOCK`,
+`PB1`=`DATA`). Contrairement à l'UART, le **clavier est maître de
+l'horloge** — il envoie des bits de façon asynchrone, quand une touche
+est pressée/relâchée — donc `ps2_read_byte` doit tourner sans
+interruption logicielle du début à la fin d'une trame, sous peine de
+rater un front d'horloge.
+
+| Fonction | Rôle |
+|---|---|
+| `ps2_read_byte` | Lit UNE trame PS/2 complète (11 bits : start/8 données/parité impaire/stop), **bloque** jusqu'à réception. Sortie : `AL` = scan code brut (Set 2), `CF`=1 si erreur de parité/stop |
+| `ps2_wait_falling_edge` | Attend un front descendant de `CLOCK`, retourne l'état du Port B à cet instant (pour lire `DATA`) |
+
+Ne traduit pas encore les scan codes en caractères (Scan Code Set 2 :
+un octet pour une touche simple, préfixe `0xE0` pour les touches
+étendues, `0xF0` pour un relâchement) — voir `TEST_PS2` ci-dessous
+pour le harnais de test, et Directives.md pour la suite prévue.
+
+⚠️ **`ps2_read_byte` exige que le Port B soit configuré en ENTRÉE** —
+ce n'est le cas que lorsque `TEST_PS2` est actif (voir `MASQUE_PIO`
+dans `include/hardware.inc`). L'appeler en dehors de ce contexte
+relirait le verrou de sortie du 8255, pas l'état réel des broches.
+
+### Test de mise en service conditionnel (`TEST_PS2`)
+
+Comme `TEST_I2C_DUMP`, une directive `%define TEST_PS2`,
+**commentée par défaut**, active un harnais de test — mais celui-ci
+**remplace tout le POST normal** par une boucle infinie qui affiche
+sur l'UART le scan code brut de chaque trame reçue du clavier :
+
+```
+=== Test PS/2 (TEST_PS2): en attente de frappes clavier (Set 2, brut) ===
+Scan code recu: 0x1C
+Scan code recu: 0xF0
+Scan code recu: 0x1C
+```
+
+Sert uniquement à valider le câblage/protocole avant d'écrire un vrai
+pilote (traduction scan code → caractère). Bascule aussi le Port B du
+8255 en entrée (`MASQUE_PIO`) — **aucun autre changement** quand la
+directive reste désactivée (comportement par défaut inchangé, vérifié
+octet pour octet : `MASQUE_PIO` reste `80h`).
+
+Activation (mêmes deux façons que `TEST_I2C_DUMP`) :
+
+```sh
+nasm -f bin -d TEST_PS2 solution-01.asm -o solution-01.bin
+```
+
 ## Outils nécessaires pour produire le `.bin` final
 
 | Outil | Rôle |
@@ -336,7 +395,7 @@ répéter le flag `-d` à chaque fois.
 ```sh
 make          # construit tout : ROM complète + modules individuels
 make rom      # ROM complète, copiée vers Z:\Partage\Alain\rom.bin
-make lib      # modules individuels (lib/bin/lcd.bin, lib/bin/uart.bin, lib/utils.bin, lib/bin/lcd_i2c.bin)
+make lib      # modules individuels (lib/bin/lcd.bin, lib/bin/uart.bin, lib/utils.bin, lib/bin/lcd_i2c.bin, lib/bin/ps2.bin)
 make check    # assemble la ROM puis valide sa structure (check_rom.py)
 make check-modules  # verifie que chaque module s'assemble seul, sans erreur
 make clean    # supprime tous les .bin generes

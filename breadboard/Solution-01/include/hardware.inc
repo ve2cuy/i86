@@ -24,8 +24,19 @@ PORTA       EQU    10000000B   ;8255 ACTIVE PAR A7
 PORTB       EQU    10000001B
 PORTC       EQU    10000010B
 PIO         EQU    10000011B
+
+; MASQUE_PIO: mot de mode du 8255 (mode 0). Conditionnel a TEST_PS2
+; (voir solution-01.asm, defini AVANT cet %include): le clavier PS/2
+; (lib/ps2.asm) a besoin du Port B en ENTREE (bit1=1) pour lire
+; CLOCK/DATA - sinon (comportement par defaut, INCHANGE), les 3 ports
+; restent en sortie comme avant. Le Port A (LCD/UART/LCD-I2C) et le
+; Port C (chenillard) restent TOUJOURS en sortie dans les 2 cas -
+; seul le bit du Port B (D1) change entre les deux mots.
+%ifdef TEST_PS2
+MASQUE_PIO  EQU    10000010B   ;PORT A ET C EN SORTIE, PORT B EN ENTREE (PS/2)
+%else
 MASQUE_PIO  EQU    10000000B   ;PORT A,B ET C EN SORTIES
-; MASQUE_PIO2 EQU    10001001B   ;PORT A ET B EN SORTIES, C EN ENTREE
+%endif
 
 ; --- copie fantome du port A + compteurs de progression du test RAM:
 ; --- vivent dans la zone deja reservee a la pile (segment VAR_SEG,

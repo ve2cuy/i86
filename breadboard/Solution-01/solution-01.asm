@@ -86,6 +86,19 @@ SECONDE         equ     1000            ; 1 seconde = 1000 ms
 ; %define TEST_I2C_DUMP
 ; ------------------------------------------------------------
 
+; ------------------------------------------------------------
+; TEST_PS2 (decommenter la ligne %define ci-dessous pour activer):
+; premier jalon de mise en service d'un clavier PS/2 (PB0=CLOCK,
+; PB1=DATA - voir lib/ps2.asm). REMPLACE le POST normal par une
+; boucle infinie qui affiche sur l'UART le scan code brut (Set 2)
+; de chaque trame recue - sert UNIQUEMENT a valider le cablage/
+; protocole avant d'ecrire un vrai pilote (traduction scan code ->
+; caractere) - voir Directives.md. Bascule aussi le Port B du 8255
+; en ENTREE (voir MASQUE_PIO, include/hardware.inc) - AUCUN autre
+; changement quand cette directive reste desactivee (par defaut).
+; %define TEST_PS2
+; ------------------------------------------------------------
+
 %macro cls 0
         mov     si, CLS         ; efface l'ecran du terminal (ANSI)
         call    uart_tx_string
@@ -150,6 +163,34 @@ start:
         mov     al, UART_MASK   ; PA7=1 (idle), tout le reste a 0
         mov     [es:di], al
         out     PORTA, al
+
+%ifdef TEST_PS2
+        ; --- Test PS/2 (TEST_PS2): boucle infinie qui affiche sur
+        ; l'UART le scan code (Set 2, brut) de chaque trame recue du
+        ; clavier, en polling pur (Port B du 8255, deja configure en
+        ; ENTREE par init_8255/MASQUE_PIO ci-dessus). REMPLACE le
+        ; reste du POST - voir lib/ps2.asm et la note pres de
+        ; %define TEST_PS2 en haut du fichier. Ne retourne JAMAIS. ---
+        mov     si, txt_ps2_attente
+        call    uart_tx_string
+.ps2_loop:
+        call    ps2_read_byte    ; bloque - AL=scan code recu, CF=1 si trame invalide
+        pushf                    ; CF doit survivre aux appels UART qui suivent
+                                  ; (AL, lui, est deja preserve par uart_tx_string)
+        mov     si, txt_ps2_recu
+        call    uart_tx_string
+        call    uart_tx_hex_byte ; affiche le scan code en hexa (AL toujours valide)
+        popf
+        jnc     .ps2_ok
+        mov     si, txt_ps2_erreur
+        call    uart_tx_string
+        jmp     .ps2_next
+.ps2_ok:
+        mov     si, txt_crlf
+        call    uart_tx_string
+.ps2_next:
+        jmp     .ps2_loop
+%endif
 
         ; --- Test du LCD I2C (PCF8574 0x27, SDA=PA5, SCL=PA0): une
         ; seule fois au demarrage. PA0 est partagee avec D4 du LCD
@@ -927,6 +968,7 @@ delay2:
 %include "lib/uart.asm"
 %include "lib/utils.asm"
 %include "lib/lcd_i2c.asm"
+%include "lib/ps2.asm"
 
 ; -------------------------------------------------------------------------------------------------
 ; Section suivante: donnees et textes
@@ -941,6 +983,12 @@ ANSI_BLANC:             db      27,'[0m',0      ; reset
 CLS:                    db      27,'[2J',27,'[H',0
 
 ; --- messages ---------------------------------------------------
+%ifdef TEST_PS2
+txt_ps2_attente:        db      27,'[36m','=== Test PS/2 (TEST_PS2): en attente de frappes clavier (Set 2, brut) ===',27,'[0m',13,10,0
+txt_ps2_recu:           db      'Scan code recu: 0x',0
+txt_ps2_erreur:         db      ' <<< ERREUR (parite ou bit stop invalide)',13,10,0
+%endif
+
 txt_crlf:               db      13,10,0
 txt_ok_court:           db      'OK',27,'[0m',13,10,0
 txt_defaut_court:       db      'DEFAUT',27,'[0m',13,10,0
