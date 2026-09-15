@@ -77,11 +77,11 @@ SECONDE         equ     1000            ; 1 seconde = 1000 ms
 ; ------------------------------------------------------------
 ; TEST_I2C_DUMP (decommenter la ligne %define ci-dessous pour
 ; activer): affiche en plus, sur le LCD I2C (PCF8574 0x27), les 16
-; octets en hexadecimal de CHAQUE ligne du dump ROM (rom_dump/
-; dump_line), 4 octets par ligne sur les 4 lignes du LCD 4x20 - en
-; plus de ce qui s'affiche deja sur le LCD parallele et l'UART.
-; Sert a mesurer/stresser le temps de reponse du LCD I2C: 257 mises
-; a jour completes (une par ligne du dump), voir Directives.md.
+; octets en hexadecimal de CHAQUE ligne d'un dump memoire
+; (dump_memory_action/dump_line), 4 octets par ligne sur les 4 lignes
+; du LCD 4x20 - en plus de ce qui s'affiche deja sur le LCD parallele
+; et l'UART. Sert a mesurer/stresser le temps de reponse du LCD I2C
+; (une mise a jour complete par ligne du dump), voir Directives.md.
 ; Desactive par defaut (aucun impact sur le comportement normal).
 ; %define TEST_I2C_DUMP
 ; ------------------------------------------------------------
@@ -287,8 +287,6 @@ start:
         lcd_show LCD_LINE1
         mov     si, lcd_txt_menu_dump_l2
         lcd_show LCD_LINE2
-        mov     si, lcd_txt_menu_dump_l3
-        lcd_show LCD_LINE3
         mov     si, lcd_txt_menu_dump_l4
         lcd_show LCD_LINE4
 
@@ -296,25 +294,10 @@ start:
 
         cmp     al, '1'
         jne     .dump_2
-        call    lcd_init
-        mov     si, lcd_txt_run_romdump_l1
-        lcd_show LCD_LINE1
-        mov     si, lcd_txt_run_romdump_l2
-        lcd_show LCD_LINE2
-        call    rom_dump                ; dump des 4 premiers Ko de la ROM - voir plus bas
+        call    dump_memory_action      ; demande adresses depart/fin, dump - voir plus bas
         jmp     .dump_menu
 .dump_2:
         cmp     al, '2'
-        jne     .dump_3
-        call    lcd_init
-        mov     si, lcd_txt_run_ramdump_l1
-        lcd_show LCD_LINE1
-        mov     si, lcd_txt_run_ramdump_l2
-        lcd_show LCD_LINE2
-        call    ram_dump_4k             ; dump des 4 premiers Ko de la RAM - voir plus bas
-        jmp     .dump_menu
-.dump_3:
-        cmp     al, '3'
         jne     .dump_9
         call    edit_ram_action
         jmp     .dump_menu
@@ -437,118 +420,271 @@ test_segment:
         ret
 
 ; ============================================================
-; rom_dump
-; Affiche les ROM_DUMP_SIZE premiers octets de la ROM au format:
-;   SEG:OFFSET  b0 b1 ... b15  : c0 c1 ... c15
-; ou b0..b15 sont les 16 octets en hexadecimal (2 chiffres,
-; majuscules) et c0..c15 le caractere ASCII correspondant si
-; imprimable (20h-7Eh), sinon '.'.
+; mem_calc_physical
+; Calcule l'adresse physique 20 bits (SEGMENT*16 + OFFSET) d'un
+; couple segment:offset, en 32 bits (DX:AX) - un registre complet
+; est utilise (plutot que 20 bits precis) pour que la comparaison et
+; la soustraction faites par dump_memory_action restent simples,
+; meme si DX vaut toujours 0 en pratique sur ce materiel (bus
+; d'adresse 8088 a 20 lignes seulement).
 ;
-; Adressage affiche: REEL (segment materiel ES = CS, = C000h sur
-; ce montage) - l'adresse imprimee ici correspond exactement a ce
-; qu'on verrait avec un debogueur materiel (SEG:OFFSET reel).
-;
-; Limite a ROM_DUMP_SIZE = 1000h (4 Ko, 256 lignes) pour rester
-; rapide. Ensuite, UNE ligne supplementaire est affichee pour les
-; 16 DERNIERS octets de la ROM: c'est exactement le vecteur de
-; reset (jmp C000h:0000h) suivi de la signature ' VE2CUY 26' - voir
-; la fin du fichier.
-;
-; ATTENTION segment: le premier dump utilise ES=CS (C000h), qui ne
-; peut adresser QUE les 64 Ko C0000h-CFFFFh. Les 16 DERNIERS octets
-; de la ROM (256 Ko) sont a l'adresse physique FFFF0h-FFFFFh, hors
-; de portee de CS:offset - on y accede avec le meme segment que le
-; vecteur de reset materiel du 8088: F000h:FFF0h.
-;
-; La ligne 2 du LCD suit la progression: a CHAQUE ligne envoyee
-; sur l'UART, dump_line y affiche l'adresse ES:DI de cette ligne.
+; Entree:  AX = segment, BX = offset
+; Sortie:  DX:AX = adresse physique (DX = poids fort, AX = poids
+;          faible)
+; Detruit: CX
 ; ============================================================
-ROM_DUMP_SIZE           equ     1000h           ; 4 Ko a dumper depuis le debut
-ROM_LAST_LINE_SEG       equ     0F000h          ; segment pour les 16 derniers octets
-ROM_LAST_LINE_OFF       equ     0FFF0h          ; F000h:FFF0h = physique FFFF0h
-
-rom_dump:
-        push    ax
-        push    bx
-        push    cx
-        push    dx
-        push    si
-        push    di
-        push    es
-
-        call    msg_dump_banniere
-
-        mov     ax, cs
-        mov     es, ax          ; ES = segment materiel REEL (CS), affiche tel quel
-
-        xor     di, di
-        mov     bx, 1           ; BX = numero de ligne courante (1-based),
-                                 ; passe a dump_line pour la ligne 4 du LCD
-.line_loop:
-        call    dump_line               ; affiche ES:DI (UART+LCD), avance DI de 16
-        inc     bx
-        cmp     di, ROM_DUMP_SIZE       ; les 4 Ko demandes sont-ils affiches ?
-        jb      .line_loop
-
-        ; --- ligne separee: les 16 DERNIERS octets de la ROM ---
-        mov     ax, ROM_LAST_LINE_SEG
-        mov     es, ax
-        mov     di, ROM_LAST_LINE_OFF
-        mov     bx, 257         ; derniere ligne logique (256 + celle-ci)
-        call    dump_line
-
-        call    msg_dump_fin
-
-        pop     es
-        pop     di
-        pop     si
-        pop     dx
-        pop     cx
-        pop     bx
-        pop     ax
+mem_calc_physical:
+        xor     dx, dx
+        mov     cx, 4
+.shl4:
+        shl     ax, 1
+        rcl     dx, 1
+        loop    .shl4
+        add     ax, bx
+        adc     dx, 0
         ret
 
 ; ============================================================
-; ram_dump_4k
-; Dump hexadecimal+ASCII des 4 premiers Ko de la RAM (segment
-; 0000h, offsets 0000h-0FFFh) - reutilise dump_line TELLE QUELLE
-; (256 lignes de 16 octets, memes formats UART/LCD[/LCD-I2C] que
-; rom_dump), sans la ligne speciale des 16 derniers octets
-; (specifique au vecteur de reset de la ROM, non pertinente ici).
+; dump_memory_action
+; Consolide les anciennes options "Dump ROM" et "Dump first 4k RAM"
+; du menu Dump memory sous une seule action: demande une adresse de
+; DEPART puis une adresse de FIN, chacune saisie au clavier sous la
+; forme SEGMENT:OFFSET (4+4 chiffres hexa, retour arriere pour
+; corriger - voir ps2_read_hex_editable), puis affiche en
+; hexadecimal+ASCII (UART) et hexadecimal condense (LCD[+LCD-I2C si
+; TEST_I2C_DUMP]) tous les octets de cette plage physique, 16 octets
+; par ligne, via dump_line (inchangee).
 ;
-; Note: la ligne 4 du LCD affiche "Ligne: NNN/257" (voir dump_line)
-; - le "/257" reste celui du dump ROM (256+1 ligne speciale); ce
-; dump RAM n'a que 256 lignes, le denominateur est donc legerement
-; inexact pour ce cas - cosmetique seulement, pas corrige pour
-; l'instant (voir Directives.md).
+; Fonctionne indifferemment pour la ROM (ex: C000:0000 a F000:FFFF
+; pour toute la ROM, 256 Ko), la RAM (ex: 0000:0000 a 1000:FFFF pour
+; toute la RAM, 128 Ko) ou n'importe quelle plage intermediaire -
+; plus besoin de deux procedures separees.
+;
+; La plage peut traverser une frontiere de segment (ex: 0000:FFF0 a
+; 1000:0010): l'offset (DI) est avance de 16 a chaque ligne comme
+; avant; en cas de debordement (DI redevient <= sa valeur d'avant
+; l'ajout), le segment (ES) est avance de 1000h pour rester a la
+; bonne adresse physique (1 paragraphe = 16 octets = 1000h en
+; unites de segment).
+;
+; Validation: si l'adresse de fin (physique) est STRICTEMENT
+; INFERIEURE a celle de depart, la plage est invalide - un message
+; d'erreur est affiche (UART, en rouge) et la fonction retourne sans
+; rien dumper.
+;
+; Limitation connue (affichage seulement): la ligne 4 du LCD affiche
+; desormais "Ligne: NNN" (numero de la ligne courante, SANS total -
+; contrairement a l'ancien "NNN/257" fixe, devenu incorrect des que
+; la taille de la plage varie). lcd_tx_dec3 n'affiche que 3 chiffres
+; (0-999): au-dela de 999 lignes (15984 octets) ce numero redevient
+; incorrect (cosmetique seulement, voir Directives.md) - le dump
+; UART, lui, reste toujours exact quelle que soit la taille de la
+; plage.
 ; ============================================================
-RAM_DUMP_SIZE           equ     1000h           ; 4 Ko a dumper depuis le debut
-
-ram_dump_4k:
+dump_memory_action:
         push    ax
         push    bx
         push    cx
         push    dx
         push    si
         push    di
+        push    bp
         push    es
 
-        call    msg_ram_dump_banniere
+        call    lcd_init
 
-        xor     ax, ax
-        mov     es, ax          ; ES = 0000h (meme segment que le premier
-                                 ; bloc teste par test_ram)
-        xor     di, di
-        mov     bx, 1
+        ; --- adresse de depart (ligne 1 du LCD) ---
+        mov     si, txt_dump_start_prefix       ; "Start: 0x"
+        call    uart_tx_string
+        mov     si, txt_dump_start_prefix
+        lcd_show LCD_LINE1
+        mov     cl, 4
+        mov     ah, (LCD_LINE1 & 07Fh) + 9      ; 9 = long. de "Start: 0x"
+        call    ps2_read_hex_editable           ; BX = segment de depart
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, DUMP_START_SEG_OFF
+        mov     [es:di], bx
+
+        mov     si, txt_dump_seg_off_sep        ; ":0x"
+        call    uart_tx_string
+        mov     si, txt_dump_seg_off_sep
+        call    lcd_print
+        mov     cl, 4
+        mov     ah, (LCD_LINE1 & 07Fh) + 16     ; 16 = long. de "Start: 0xSSSS:0x"
+        call    ps2_read_hex_editable           ; BX = offset de depart
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, DUMP_START_OFF_OFF
+        mov     [es:di], bx
+
+        ; --- adresse de fin (ligne 2 du LCD) ---
+        mov     al, 13
+        call    uart_tx_byte
+        mov     al, 10
+        call    uart_tx_byte
+        mov     si, txt_dump_end_prefix         ; "End:   0x"
+        call    uart_tx_string
+        mov     si, txt_dump_end_prefix
+        lcd_show LCD_LINE2
+        mov     cl, 4
+        mov     ah, (LCD_LINE2 & 07Fh) + 9      ; 9 = long. de "End:   0x"
+        call    ps2_read_hex_editable           ; BX = segment de fin
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, DUMP_END_SEG_OFF
+        mov     [es:di], bx
+
+        mov     si, txt_dump_seg_off_sep
+        call    uart_tx_string
+        mov     si, txt_dump_seg_off_sep
+        call    lcd_print
+        mov     cl, 4
+        mov     ah, (LCD_LINE2 & 07Fh) + 16     ; 16 = long. de "End:   0xSSSS:0x"
+        call    ps2_read_hex_editable           ; BX = offset de fin
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, DUMP_END_OFF_OFF
+        mov     [es:di], bx
+
+        mov     al, 13
+        call    uart_tx_byte
+        mov     al, 10
+        call    uart_tx_byte
+
+        ; --- bandeau UART: rappelle les deux adresses saisies ---
+        mov     si, txt_dump_banniere1
+        call    uart_tx_string
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, DUMP_START_SEG_OFF
+        mov     ax, [es:di]
+        call    uart_tx_hex_word
+        mov     al, ':'
+        call    uart_tx_byte
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, DUMP_START_OFF_OFF
+        mov     ax, [es:di]
+        call    uart_tx_hex_word
+        mov     si, txt_dump_banniere2
+        call    uart_tx_string
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, DUMP_END_SEG_OFF
+        mov     ax, [es:di]
+        call    uart_tx_hex_word
+        mov     al, ':'
+        call    uart_tx_byte
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, DUMP_END_OFF_OFF
+        mov     ax, [es:di]
+        call    uart_tx_hex_word
+        mov     si, txt_dump_banniere3
+        call    uart_tx_string
+
+        ; --- calcule les adresses physiques (32 bits: DX:AX) ---
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, DUMP_START_SEG_OFF
+        mov     ax, [es:di]                     ; AX = segment de depart
+        mov     di, DUMP_START_OFF_OFF
+        mov     bx, [es:di]                     ; BX = offset de depart
+        call    mem_calc_physical               ; DX:AX = adresse physique de depart
+        push    dx
+        push    ax                              ; empile start_phys (hi puis lo)
+
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, DUMP_END_SEG_OFF
+        mov     ax, [es:di]                     ; AX = segment de fin
+        mov     di, DUMP_END_OFF_OFF
+        mov     bx, [es:di]                     ; BX = offset de fin
+        call    mem_calc_physical               ; DX:AX = adresse physique de fin
+
+        pop     cx                              ; CX = start_phys (poids faible)
+        pop     bp                              ; BP = start_phys (poids fort)
+
+        cmp     dx, bp
+        jb      .invalid_range
+        ja      .range_ok
+        cmp     ax, cx
+        jb      .invalid_range
+.range_ok:
+        ; --- diff = end_phys - start_phys (32 bits), puis
+        ; --- total_lines = diff/16 + 1 (division par 16 = 4 decalages
+        ; --- a droite du couple DX:AX) ---
+        sub     ax, cx
+        sbb     dx, bp
+        mov     cx, 4
+.shr32:
+        shr     dx, 1
+        rcr     ax, 1
+        loop    .shr32
+        inc     ax                              ; AX = total_lines (DX ignore -
+                                                  ; toujours 0 pour une plage valide
+                                                  ; sur ce materiel, voir en-tete)
+
+        ; --- compteur de lignes restantes: memorise en RAM (VAR_SEG),
+        ; --- PAS dans CX - dump_line detruit CX (voir son en-tete),
+        ; --- un simple "loop" n'y survivrait pas d'une iteration a
+        ; --- l'autre ---
+        mov     bx, VAR_SEG
+        mov     es, bx
+        mov     di, DUMP_LINES_LEFT_OFF
+        mov     [es:di], ax
+
+        ; --- ES:DI = adresse de depart (telle que saisie - pas
+        ; --- renormalisee - pour que la premiere ligne affichee
+        ; --- corresponde exactement a ce qui a ete tape) ---
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, DUMP_START_SEG_OFF
+        mov     ax, [es:di]                     ; AX = segment de depart
+        mov     di, DUMP_START_OFF_OFF
+        mov     bx, [es:di]                     ; BX = offset de depart
+        mov     es, ax                          ; ES = segment de depart (bascule enfin
+                                                  ; sur le segment de la plage a dumper)
+        mov     di, bx                          ; DI = offset de depart
+
+        mov     bx, 1                            ; BX = numero de ligne courant (1-based,
+                                                  ; pour "Ligne: NNN" sur le LCD)
 .line_loop:
-        call    dump_line               ; affiche ES:DI (UART+LCD), avance DI de 16
+        push    di
+        call    dump_line                       ; affiche ES:DI (UART+LCD), avance DI de 16
+        pop     dx                               ; DX = DI D'AVANT l'appel
+        cmp     di, dx
+        ja      .no_wrap                         ; DI a augmente normalement
+        mov     ax, es                           ; debordement 16 bits: avance le segment
+        add     ax, 1000h                        ; d'un paragraphe (16 octets = 1000h en
+        mov     es, ax                           ; unites de segment)
+.no_wrap:
         inc     bx
-        cmp     di, RAM_DUMP_SIZE
-        jb      .line_loop
 
-        call    msg_dump_fin            ; reutilise le message existant ("Dump termine")
-
+        ; --- decompte du nombre de lignes restantes (VAR_SEG) - ES
+        ; --- (segment du dump en cours) est sauvegarde/restaure
+        ; --- autour de ce court aller-retour ---
+        push    es
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     si, DUMP_LINES_LEFT_OFF
+        dec     word [es:si]
+        mov     ax, [es:si]
         pop     es
+        cmp     ax, 0
+        jne     .line_loop
+
+        call    msg_dump_fin
+        jmp     .done
+
+.invalid_range:
+        mov     si, txt_dump_invalid_range
+        call    uart_tx_string
+
+.done:
+        pop     es
+        pop     bp
         pop     di
         pop     si
         pop     dx
@@ -581,8 +717,8 @@ EDIT_ROWS               equ     4               ; lignes de la grille (= 4 ligne
 ;                     un chiffre a ete tape - sinon ignoree)
 ;   Q ou q           - termine l'edition, retourne au menu
 ;
-; Adresse "reelle" (segment 0000h, meme convention que rom_dump/
-; dump_line) - AUCUNE verification de bornes: on peut ecrire
+; Adresse "reelle" (segment 0000h, meme convention que dump_line) -
+; AUCUNE verification de bornes: on peut ecrire
 ; n'importe ou dans les 64 Ko du segment 0000h, y compris hors de la
 ; zone testee par test_ram (voir son en-tete).
 ; ============================================================
@@ -986,11 +1122,19 @@ edit_ram_advance:
 ;   LCD (4x20):
 ;     ligne 2 = adresse "SSSS:OOOO"
 ;     ligne 3 = apercu des 7 premiers octets en hexadecimal
-;     ligne 4 = "Ligne: NNN/257"
+;     ligne 4 = "Ligne: NNN" (numero de cette ligne, sans total - voir
+;               dump_memory_action)
 ;
 ; Entree:  ES:DI = adresse de depart de la ligne (16 octets)
-;          BX = numero de cette ligne (1-257, prepare par rom_dump)
-; Sortie:  DI avance de 16 (adresse de la ligne suivante), BX inchange
+;          BX = numero de cette ligne (1-based, prepare par
+;               dump_memory_action)
+; Sortie:  DI avance de 16 (adresse de la ligne suivante). BX et ES
+;          inchanges - IMPORTANT: CX (et AX, DX, SI) sont en revanche
+;          DETRUITS (loops internes de cette procedure) - tout
+;          appelant qui boucle sur plusieurs lignes doit garder son
+;          propre compteur ailleurs que dans CX (voir
+;          dump_memory_action, qui le stocke en RAM plutot que
+;          d'utiliser une instruction "loop").
 ; ============================================================
 dump_line:
         ; --- LCD: adresse de cette ligne (avant de l'envoyer sur l'UART,
@@ -1025,8 +1169,8 @@ dump_line:
         loop    .lcd_preview_loop
         pop     di
 
-        ; --- Ligne 4 du LCD: numero de cette ligne / 257 (BX prepare
-        ; par rom_dump) ---
+        ; --- Ligne 4 du LCD: numero de cette ligne (BX prepare par
+        ; dump_memory_action) ---
         lcd_goto LCD_LINE4
         mov     si, lcd_txt_ligne_prefix
         call    lcd_print
@@ -1380,20 +1524,10 @@ msg_ram_defectueuse:
         ret
 
 ; ============================================================
-; msg_dump_banniere / msg_dump_fin / msg_ram_dump_banniere
+; msg_dump_fin
 ; ============================================================
-msg_dump_banniere:
-        mov     si, txt_dump_banniere
-        call    uart_tx_string
-        ret
-
 msg_dump_fin:
         mov     si, txt_dump_fin
-        call    uart_tx_string
-        ret
-
-msg_ram_dump_banniere:
-        mov     si, txt_ram_dump_banniere
         call    uart_tx_string
         ret
 
@@ -1544,12 +1678,16 @@ txt_banniere2:          db      'Plan: seg 0000h (00000h-0FFFFh, 64 blocs) + seg
 txt_ram_ok:             db      27,'[32m','*** RAM OK - 130048 octets testes (127 blocs de 1 Ko), aucune erreur ***',27,'[0m',13,10,13,10,0
 txt_ram_defaut:         db      27,'[31m','*** RAM DEFECTUEUSE - voir le detail des defauts ci-dessus ***',27,'[0m',13,10,13,10,0
 
-txt_dump_banniere:      db      27,'[34m','=== Dump ROM - 4 premiers Ko (C000:0000-C000:0FF0) + 16 derniers octets (F000:FFF0) ===',27,'[0m',13,10
-                        db      'Duree estimee a 9600 bauds: environ 21 secondes',13,10,13,10,0
+; ---- bandeau de dump_memory_action: "=== Dump memoire: SSSS:OOOO a
+; ---- SSSS:OOOO ===" - les adresses (saisies au clavier) sont
+; ---- inserees entre ces 3 fragments par le code lui-meme ----
+txt_dump_banniere1:      db      27,'[34m','=== Dump memoire: ',0
+txt_dump_banniere2:      db      ' a ',0
+txt_dump_banniere3:      db      ' ===',27,'[0m',13,10,0
 
-txt_dump_fin:            db      27,'[32m','*** Dump ROM termine ***',27,'[0m',13,10,13,10,0
+txt_dump_fin:            db      27,'[32m','*** Dump termine ***',27,'[0m',13,10,13,10,0
 
-txt_ram_dump_banniere:  db      27,'[34m','=== Dump RAM - 4 premiers Ko (0000:0000-0000:0FF0) ===',27,'[0m',13,10,13,10,0
+txt_dump_invalid_range: db      27,'[31m','*** Adresse de fin < adresse de depart - dump annule ***',27,'[0m',13,10,13,10,0
 
 txt_auteur:             db      '8088 sur breadboard version 2026',13,10
                         db      'Par Alain Boudreault, aka VE2CUY',13,10
@@ -1564,14 +1702,21 @@ txt_menu_main:          db      27,'[36m','--- Menu principal ---',27,'[0m',13,1
                         db      '4) Edit RAM',13,10,13,10,0
 
 txt_menu_dump:          db      27,'[36m','--- Menu Dump memory ---',27,'[0m',13,10
-                        db      '1) Dump ROM',13,10
-                        db      '2) Dump first 4k RAM',13,10
-                        db      '3) Edit RAM',13,10
+                        db      '1) Dump memory',13,10
+                        db      '2) Edit RAM',13,10
                         db      '9) Home menu',13,10,13,10,0
 
 ; ---- invite "Edit RAM" (voir edit_ram_action) ----
 txt_edit_address_prefix: db     'Address: 0x', 0
 txt_edit_help:           db     27,'[36m','Fleches: deplacer | chiffre hexa: editer | Entree: enregistrer | Q: quitter',27,'[0m',13,10,13,10,0
+
+; ---- invites "Dump memory" (voir dump_memory_action) - "End:   0x"
+; ---- a la meme longueur (9) que "Start: 0x" pour que les chiffres
+; ---- de segment se retrouvent a la meme colonne DDRAM sur les
+; ---- lignes 1/2 du LCD ----
+txt_dump_start_prefix:  db      'Start: 0x', 0
+txt_dump_end_prefix:    db      'End:   0x', 0
+txt_dump_seg_off_sep:   db      ':0x', 0
 
 ; ---- texte du LCD I2C (PCF8574 0x27) - pas de padding, pas de
 ; ---- largeur fixe imposee comme sur le LCD parallele ----
@@ -1594,10 +1739,10 @@ lcd_text lcd_txt_menu_main_l2, '2) Dump memory', 20
 lcd_text lcd_txt_menu_main_l3, '3) LED Show on PC', 20
 lcd_text lcd_txt_menu_main_l4, '4) Edit RAM', 20
 
-; ---- menu Dump memory (voir start:) ----
-lcd_text lcd_txt_menu_dump_l1, '1) Dump ROM', 20
-lcd_text lcd_txt_menu_dump_l2, '2) Dump first 4k RAM', 20
-lcd_text lcd_txt_menu_dump_l3, '3) Edit RAM', 20
+; ---- menu Dump memory (voir start:) - seules les lignes 1/2/4 sont
+; ---- utilisees (ligne 3 laissee vide par lcd_init) ----
+lcd_text lcd_txt_menu_dump_l1, '1) Dump memory', 20
+lcd_text lcd_txt_menu_dump_l2, '2) Edit RAM', 20
 lcd_text lcd_txt_menu_dump_l4, '9) Home menu', 20
 
 ; ---- bandeau ligne1/ligne2 affiche avant chaque action lancee depuis
@@ -1609,12 +1754,6 @@ lcd_text lcd_txt_run_ram_l2, 'En cours...', 20
 lcd_text lcd_txt_run_led_l1, 'Test 8255', 20
 lcd_text lcd_txt_run_led_l2, 'Chenillard Port C', 20
 lcd_text lcd_txt_run_led_l4, 'VE2CUY 2026', 20
-
-lcd_text lcd_txt_run_romdump_l1, 'Dump ROM', 20
-lcd_text lcd_txt_run_romdump_l2, 'Dump 4K+16 octets', 20
-
-lcd_text lcd_txt_run_ramdump_l1, 'Dump RAM 4K', 20
-lcd_text lcd_txt_run_ramdump_l2, 'En cours...', 20
 
 ; ---- complement de 11 espaces utilise par dump_line, apres les 9
 ; ---- caracteres d'adresse "SSSS:OOOO" (9+11=20) ----
@@ -1635,10 +1774,12 @@ lcd_txt_bloc_mid:       db      '/127 Def:', 0
 lcd_txt_passe_prefix:   db      'Passe: ', 0
 lcd_text lcd_txt_passe_suffix, '/16', 10
 
-; ---- ligne 4 de l'etape 3 (dump_line): "Ligne: " + dec3 + "/257" +
-; ---- 6 espaces = 7+3+10 = 20 caracteres ----
+; ---- ligne 4 de l'etape 3 (dump_line): "Ligne: " + dec3 + 10
+; ---- espaces = 7+3+10 = 20 caracteres. Pas de "/total": la plage
+; ---- dumpee est desormais de taille variable (dump_memory_action) -
+; ---- voir sa limitation connue (lcd_tx_dec3, 0-999 lignes) ----
 lcd_txt_ligne_prefix:   db      'Ligne: ', 0
-lcd_text lcd_txt_ligne_suffix, '/257', 10
+lcd_text lcd_txt_ligne_suffix, '', 10
 
 ; ---- remplissage jusqu'au vecteur de reset            ----
 ; ---- calcul en fonction de la taille de la ROM (256K) ----

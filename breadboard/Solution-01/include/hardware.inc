@@ -48,4 +48,17 @@ EDIT_BASE_OFF       equ     0FC03h  ; adresse de base de la grille d'edition (mo
 EDIT_ROW_OFF        equ     0FC05h  ; ligne courante du curseur (0-3)
 EDIT_COL_OFF        equ     0FC06h  ; colonne courante du curseur (0-5)
 
+; --- adresses saisies par dump_memory_action (solution-01.asm), le
+; --- temps de calculer les adresses physiques de depart/fin - voir
+; --- son en-tete ---
+DUMP_START_SEG_OFF  equ     0FC07h  ; segment de depart saisi (mot)
+DUMP_START_OFF_OFF  equ     0FC09h  ; offset de depart saisi (mot)
+DUMP_END_SEG_OFF    equ     0FC0Bh  ; segment de fin saisi (mot)
+DUMP_END_OFF_OFF    equ     0FC0Dh  ; offset de fin saisi (mot)
+DUMP_LINES_LEFT_OFF equ     0FC0Fh  ; lignes de 16 octets restant a
+                                     ; afficher (mot, decompte - voir
+                                     ; dump_memory_action: dump_line
+                                     ; detruit CX, un compteur "loop"
+                                     ; classique n'y survivrait pas)
+
 %endif ; HARDWARE_INC

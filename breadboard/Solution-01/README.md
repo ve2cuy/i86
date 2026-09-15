@@ -294,8 +294,8 @@ note dans `solution-01.asm` sur le vecteur de reset).
 ### Test de performance conditionnel (`TEST_I2C_DUMP`)
 
 Active un affichage supplémentaire, sur le LCD I2C, des 16 octets de
-**chaque ligne** du dump ROM (`dump_line`) — 4 octets par ligne sur
-les 4 lignes du LCD 4×20 :
+**chaque ligne** d'un dump mémoire (`dump_memory_action`/`dump_line`)
+— 4 octets par ligne sur les 4 lignes du LCD 4×20 :
 - **Lignes 1 et 3** (`i2c_dump_hex_ascii8_line`) : `"XX XX XX XX "` (ses
   4 octets, en hexadécimal) puis **8 caractères ASCII** — ceux de ce
   groupe de 4 octets **et** du suivant (`.` pour les non imprimables,
@@ -306,8 +306,9 @@ les 4 lignes du LCD 4×20 :
   précédente).
 
 En plus de ce qui s'affiche déjà sur le LCD parallèle et l'UART. Sert
-à mesurer/stresser le temps de réponse du LCD I2C sur 257 mises à jour
-complètes et successives.
+à mesurer/stresser le temps de réponse du LCD I2C : une mise à jour
+complète par ligne du dump (leur nombre dépend désormais de la plage
+saisie — voir la section Menu interactif plus bas).
 Aucun impact sur le comportement normal quand la directive reste
 désactivée : le code correspondant (dans `dump_line` et dans les
 procédures `i2c_dump_hex_only_line`/`i2c_dump_hex_ascii8_line`) est
@@ -401,13 +402,34 @@ des versions précédentes : chaque action est déclenchée par une touche
 **Menu "Dump memory"** (option 2 du menu principal) :
 
 ```
-1) Dump ROM
-2) Dump first 4k RAM
-3) Edit RAM
+1) Dump memory
+2) Edit RAM
 9) Home menu
 ```
 
-**Edit RAM** (option 4 du menu principal, ou option 3 du menu Dump —
+**Dump memory** (option 1 du menu Dump) : demande une adresse de
+**départ** puis une adresse de **fin**, chacune saisie au format
+`SEGMENT:OFFSET` (4+4 chiffres hexadécimaux, retour arrière pour
+corriger — même mécanique que `Edit RAM` ci-dessous) :
+
+```
+Start: 0x0000:0x0000
+End:   0x0000:0x0FFF
+```
+
+... puis dump (hexadécimal+ASCII sur l'UART, hexadécimal condensé sur
+le LCD[+LCD-I2C si `TEST_I2C_DUMP`]) tous les octets de cette plage
+**physique**, 16 octets par ligne, via `dump_line`. Une seule action
+(`dump_memory_action`) remplace les deux anciennes options fixes
+("Dump ROM" / "Dump first 4k RAM") : elle fonctionne indifféremment
+pour la ROM (ex. `C000:0000` à `F000:FFFF` pour toute la ROM, 256 Ko),
+la RAM (ex. `0000:0000` à `1000:FFFF` pour toute la RAM, 128 Ko) ou
+n'importe quelle plage intermédiaire, y compris à cheval sur une
+frontière de segment. Si l'adresse de fin est antérieure à celle de
+départ, la plage est rejetée (message d'erreur UART, rien n'est
+dumpé).
+
+**Edit RAM** (option 4 du menu principal, ou option 2 du menu Dump —
 même action `edit_ram_action` dans les deux cas) : éditeur de RAM
 interactif. Demande d'abord une adresse de départ (avec retour
 arrière pour corriger) :
@@ -438,8 +460,7 @@ sur la case sélectionnée) :
 | Option | Action | Détail |
 |---|---|---|
 | Test RAM | `test_ram` | Inchangée — teste la RAM 128 Ko, rapporte via UART+LCD |
-| Dump ROM | `rom_dump` | Inchangée — dump hex+ASCII des 4 premiers Ko de la ROM |
-| Dump first 4k RAM | `ram_dump_4k` (nouveau) | Réutilise `dump_line` telle quelle, pointée sur la RAM (segment `0000h`) plutôt que la ROM |
+| Dump memory | `dump_memory_action` (nouveau, consolidé) | Demande adresse de départ + de fin (`SEGMENT:OFFSET`), dump via `dump_line` — remplace `rom_dump`/`ram_dump_4k` |
 | LED Show on PC | `effet1` | Inchangée — chenillard sur le Port C |
 | Edit RAM | `edit_ram_action` (refait) | Grille interactive 24 octets, navigation aux flèches, édition avec retour arrière — voir `lib/ps2.asm` |
 | Home menu | — | Retour au menu principal depuis le menu Dump |
@@ -447,15 +468,23 @@ sur la case sélectionnée) :
 État de l'éditeur (adresse de base + position du curseur) conservé
 dans `VAR_SEG` (`EDIT_BASE_OFF`/`EDIT_ROW_OFF`/`EDIT_COL_OFF` — voir
 `include/hardware.inc`), même zone que `PORTA_SHADOW`/les compteurs
-du test RAM.
+du test RAM. `dump_memory_action` y conserve de façon similaire les
+quatre valeurs saisies (`DUMP_START_SEG_OFF`/`DUMP_START_OFF_OFF`/
+`DUMP_END_SEG_OFF`/`DUMP_END_OFF_OFF`) ainsi que le compteur de lignes
+restantes (`DUMP_LINES_LEFT_OFF`) — ce dernier **doit** vivre en RAM
+plutôt que dans `CX` : `dump_line` détruit `CX` en interne (boucles de
+prévisualisation LCD/hexa/ASCII), donc un simple `loop` autour de
+plusieurs appels n'y survivrait pas.
 
-⚠️ **Limitation connue** (voir Directives.md) : la navigation aux
-flèches est **limitée à la grille de 24 octets** initialement
-affichée — pas de défilement vers d'autres pages pour ce premier
-jalon (quitter avec `Q` et rouvrir "Edit RAM" avec une autre adresse
-pour éditer ailleurs). La ligne 4 du LCD pendant `Dump first 4k RAM`
-affiche encore "`/257`" (dénominateur du dump ROM, qui a 257 lignes)
-même si le dump RAM n'en a que 256 — cosmétique seulement.
+⚠️ **Limitations connues** (voir Directives.md) : la navigation aux
+flèches d'`Edit RAM` est **limitée à la grille de 24 octets**
+initialement affichée — pas de défilement vers d'autres pages pour ce
+premier jalon (quitter avec `Q` et rouvrir "Edit RAM" avec une autre
+adresse pour éditer ailleurs). La ligne 4 du LCD pendant un dump
+affiche "`Ligne: NNN`" (numéro de ligne, 3 chiffres via `lcd_tx_dec3`)
+sans dénominateur — au-delà de 999 lignes (15 984 octets) cet affichage
+redevient incorrect (cosmétique seulement, le dump UART reste toujours
+exact quelle que soit la taille de la plage).
 
 ## Outils nécessaires pour produire le `.bin` final
 
