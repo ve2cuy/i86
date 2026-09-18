@@ -129,6 +129,28 @@ SECONDE         equ     1000            ; 1 seconde = 1000 ms
                 db      0
 %endmacro
 
+; --- uart_flag_bit: affiche via l'UART le mnemonique DEBUG.COM (2
+; --- lettres) correspondant a UN bit du registre FLAGS - utilise 8
+; --- fois par registers_dump_action pour le decodage "ergonomique"
+; --- des FLAGS (ordre classique OF DF IF SF ZF AF PF CF). Le
+; --- mnemonique "actif" (bit=1) est colore en jaune pour ressortir a
+; --- l'oeil; le mnemonique "inactif" (bit=0) reste en couleur par
+; --- defaut du terminal - voir les paires txt_flag_*_set/clear plus
+; --- bas dans la section donnees. Chaque etiquette inclut deja un
+; --- espace de separation final (voir leur definition).
+; --- %1=masque (mot), %2=etiquette si le bit est a 1, %3=etiquette
+; --- si le bit est a 0. DX DOIT deja contenir le mot FLAGS a decoder
+; --- (charge une seule fois par l'appelant, avant la 1ere invocation). ---
+%macro uart_flag_bit 3
+        test    dx, %1
+        jz      %%is_clear
+        print   %2, UART
+        jmp     %%done
+%%is_clear:
+        print   %3, UART
+%%done:
+%endmacro
+
 %include "include/hardware.inc"
 %include "include/delay.inc"
 %include "include/lcd_macros.inc"
@@ -321,6 +343,8 @@ start:
         print   lcd_txt_menu_dump_l1, LCD
         gotoxy  1, 0, LCD
         print   lcd_txt_menu_dump_l2, LCD
+        gotoxy  2, 0, LCD
+        print   lcd_txt_menu_dump_l3, LCD
         gotoxy  3, 0, LCD
         print   lcd_txt_menu_dump_l4, LCD
 
@@ -332,8 +356,13 @@ start:
         jmp     .dump_menu
 .dump_2:
         cmp     al, '2'
-        jne     .dump_9
+        jne     .dump_3
         call    edit_ram_action
+        jmp     .dump_menu
+.dump_3:
+        cmp     al, '3'
+        jne     .dump_9
+        call    registers_dump_action   ; affiche les registres du 8088 (LCD+UART) - voir plus bas
         jmp     .dump_menu
 .dump_9:
         cmp     al, '9'
@@ -1512,6 +1541,357 @@ edit_ram_advance:
         ret
 
 ; ============================================================
+; registers_dump_action
+; Option "3) Registres CPU" du sous-menu Dump memory (voir
+; .dump_menu, start:): affiche l'etat courant des registres du 8088
+; (AX,BX,CX,DX,SI,DI,BP,SP,CS,DS,ES,SS,IP,FLAGS) sur le LCD (pagine
+; sur 2 ecrans - 14 valeurs, trop pour les 4x20 caracteres
+; disponibles d'un coup) et sur l'UART (tout d'un coup, format
+; "ergonomique" inspire de DEBUG.COM - le debogueur DOS classique -
+; avec decodage complet des FLAGS, demande explicitement).
+;
+; CAPTURE: tout est fige des l'entree, AVANT le moindre usage de
+; AX/BX/CX/DX/SI/DI comme registre de travail pour l'affichage -
+; chaque registre est empile, puis relu ensuite via [bp+/-N] (SS par
+; defaut sur le 8086 pour cette forme d'adressage - meme motif que
+; int16h_handler/.set_flags, qui utilise deja "mov bp,sp" pour
+; adresser la pile directement). Details de chaque valeur:
+;
+;   IP affiche = ADRESSE DE RETOUR, deja empilee par le CALL qui a
+;   mene ici (voir [bp+2] ci-dessous) - la valeur exacte a laquelle
+;   l'execution reprendra une fois cette action terminee, equivalent
+;   exact de ce qu'un debogueur montrerait a un point d'arret place
+;   juste apres ce CALL.
+;
+;   SP affiche = SP tel que vu par l'APPELANT, avant ce CALL (donc
+;   avant que CALL n'empile IP et avant notre propre "push bp") -
+;   simple calcul BP+4, jamais relu depuis la pile (rien n'est
+;   empile "pour" cette valeur - c'est la position de BP elle-meme,
+;   decalee, qui la represente).
+;
+;   CS/DS/ES/SS/FLAGS: empiles uniquement pour pouvoir les LIRE (le
+;   8086 n'a pas de "MOV reg,FLAGS" ni de "MOV reg,CS" utilisable
+;   pour ecrire ailleurs qu'empiler - PUSHF/PUSH CS etc. restent la
+;   seule facon). Ces 5 mots ne sont PAS remis dans un registre au
+;   retour (voir .done: "add sp,10") puisque cette routine ne les a
+;   jamais reellement MODIFIES - seulement empiles comme donnee.
+;
+; Navigation (comme edit_ram_action): fleches Gauche/Droite pour
+; changer de page LCD (1/2, avec retour a la page 1 depuis la page
+; 2), Echap pour revenir au sous-menu Dump memory. Toute autre touche
+; est ignoree (pas de redessin inutile - rien ne change tant que la
+; page ne change pas). L'UART, lui, affiche tout en une seule fois
+; des l'entree (un flux serie n'a pas de largeur limitee comme le
+; LCD).
+; ============================================================
+registers_dump_action:
+        push    bp
+        mov     bp, sp                   ; [bp+0]=BP original, [bp+2]=IP de retour
+                                          ; (empile par le CALL qui a mene ici)
+
+        ; --- registres "segment/flags" - jamais modifies par cette
+        ; routine, empiles seulement pour pouvoir les afficher (voir
+        ; .done: liberes sans etre repop-es dans un registre) ---
+        pushf                            ; [bp-2]  = FLAGS
+        push    ss                       ; [bp-4]  = SS
+        push    es                       ; [bp-6]  = ES
+        push    ds                       ; [bp-8]  = DS
+        push    cs                       ; [bp-10] = CS
+
+        ; --- registres "generaux" - utilises comme scratch plus bas
+        ; pour composer l'affichage, donc DOIVENT etre restaures
+        ; avant le retour (voir .done) ---
+        push    ax                       ; [bp-12] = AX
+        push    bx                       ; [bp-14] = BX
+        push    cx                       ; [bp-16] = CX
+        push    dx                       ; [bp-18] = DX
+        push    si                       ; [bp-20] = SI
+        push    di                       ; [bp-22] = DI
+
+        call    lcd_init                 ; ecran LCD propre pour cet affichage
+
+        ; ---------------------------------------------------------
+        ; UART: tout d'un coup - "AX=.. BX=.. .. DI=.." puis
+        ; "DS=.. ES=.. SS=.. CS=.. IP=.. FLAGS=xxxx  <mnemoniques>"
+        ; (voir txt_reg_*/txt_flag_*_set/clear, section donnees)
+        ; ---------------------------------------------------------
+        print   txt_reg_banniere, UART
+
+        print   txt_reg_ax, UART
+        mov     ax, [bp-12]
+        call    uart_tx_hex_word
+        print   txt_reg_bx, UART
+        mov     ax, [bp-14]
+        call    uart_tx_hex_word
+        print   txt_reg_cx, UART
+        mov     ax, [bp-16]
+        call    uart_tx_hex_word
+        print   txt_reg_dx, UART
+        mov     ax, [bp-18]
+        call    uart_tx_hex_word
+        print   txt_reg_sp, UART
+        mov     ax, bp
+        add     ax, 4                    ; SP vu par l'appelant (voir en-tete)
+        call    uart_tx_hex_word
+        print   txt_reg_bp, UART
+        mov     ax, [bp+0]
+        call    uart_tx_hex_word
+        print   txt_reg_si, UART
+        mov     ax, [bp-20]
+        call    uart_tx_hex_word
+        print   txt_reg_di, UART
+        mov     ax, [bp-22]
+        call    uart_tx_hex_word
+        print   txt_crlf, UART
+
+        print   txt_reg_ds, UART
+        mov     ax, [bp-8]
+        call    uart_tx_hex_word
+        print   txt_reg_es, UART
+        mov     ax, [bp-6]
+        call    uart_tx_hex_word
+        print   txt_reg_ss, UART
+        mov     ax, [bp-4]
+        call    uart_tx_hex_word
+        print   txt_reg_cs, UART
+        mov     ax, [bp-10]
+        call    uart_tx_hex_word
+        print   txt_reg_ip, UART
+        mov     ax, [bp+2]
+        call    uart_tx_hex_word
+        print   txt_reg_flags_prefix, UART
+        mov     ax, [bp-2]
+        call    uart_tx_hex_word
+        print   txt_reg_flags_sep, UART
+
+        ; --- decodage FLAGS (ordre DEBUG.COM: OF DF IF SF ZF AF PF
+        ; CF) - DX charge UNE FOIS pour les 8 invocations de
+        ; uart_flag_bit (voir sa definition, section macros) ---
+        mov     dx, [bp-2]
+        uart_flag_bit 0800h, txt_flag_of_set, txt_flag_of_clear
+        uart_flag_bit 0400h, txt_flag_df_set, txt_flag_df_clear
+        uart_flag_bit 0200h, txt_flag_if_set, txt_flag_if_clear
+        uart_flag_bit 0080h, txt_flag_sf_set, txt_flag_sf_clear
+        uart_flag_bit 0040h, txt_flag_zf_set, txt_flag_zf_clear
+        uart_flag_bit 0010h, txt_flag_af_set, txt_flag_af_clear
+        uart_flag_bit 0004h, txt_flag_pf_set, txt_flag_pf_clear
+        uart_flag_bit 0001h, txt_flag_cf_set, txt_flag_cf_clear
+        print   txt_crlf, UART
+        print   txt_crlf, UART
+
+        ; ---------------------------------------------------------
+        ; LCD: pagine sur 2 ecrans (voir en-tete) - SI=0 -> page 1
+        ; (AX/BX/CX/DX/SI/DI/SP/BP), SI=1 -> page 2 (CS/DS/ES/SS/IP/
+        ; FLAGS, decodees en toutes lettres sur la ligne 4). Le
+        ; numero de page vit dans SI plutot que DX: .draw_page2
+        ; recharge DX avec la valeur de FLAGS pour son decodage en
+        ; lettres (voir plus bas, "mov dx,[bp-2]"), ce qui ecraserait
+        ; un numero de page qui y aurait ete range - SI, lui, n'est
+        ; JAMAIS touche par gotoxy/print/lcd_tx_hex_word/lcd_data/
+        ; ps2_get_char (tous le preservent - voir leurs en-tetes
+        ; respectifs), donc stable sur tout ce sous-flux. La valeur
+        ; ORIGINALE de SI (celle de l'appelant) a deja ete affichee
+        ; plus haut (UART) et relue depuis [bp-20] - SI est donc
+        ; libre ici pour servir de simple numero de page.
+        ; ---------------------------------------------------------
+        xor     si, si                   ; page courante = 0 (page 1)
+
+.redraw:
+        cmp     si, 0
+        je      .draw_page1
+        jmp     .draw_page2
+
+.draw_page1:
+        gotoxy  0, 0, LCD
+        print   txt_lcd_reg_ax, LCD
+        mov     ax, [bp-12]
+        call    lcd_tx_hex_word
+        gotoxy  0, 9, LCD
+        print   txt_lcd_reg_bx, LCD
+        mov     ax, [bp-14]
+        call    lcd_tx_hex_word
+        gotoxy  0, 17, LCD
+        print   txt_lcd_page1, LCD
+
+        gotoxy  1, 0, LCD
+        print   txt_lcd_reg_cx, LCD
+        mov     ax, [bp-16]
+        call    lcd_tx_hex_word
+        gotoxy  1, 9, LCD
+        print   txt_lcd_reg_dx, LCD
+        mov     ax, [bp-18]
+        call    lcd_tx_hex_word
+
+        gotoxy  2, 0, LCD
+        print   txt_lcd_reg_si, LCD
+        mov     ax, [bp-20]
+        call    lcd_tx_hex_word
+        gotoxy  2, 9, LCD
+        print   txt_lcd_reg_di, LCD
+        mov     ax, [bp-22]
+        call    lcd_tx_hex_word
+
+        gotoxy  3, 0, LCD
+        print   txt_lcd_reg_sp, LCD
+        mov     ax, bp
+        add     ax, 4                    ; SP vu par l'appelant (voir en-tete)
+        call    lcd_tx_hex_word
+        gotoxy  3, 9, LCD
+        print   txt_lcd_reg_bp, LCD
+        mov     ax, [bp+0]
+        call    lcd_tx_hex_word
+        jmp     .wait_key
+
+.draw_page2:
+        gotoxy  0, 0, LCD
+        print   txt_lcd_reg_cs, LCD
+        mov     ax, [bp-10]
+        call    lcd_tx_hex_word
+        gotoxy  0, 9, LCD
+        print   txt_lcd_reg_ip, LCD
+        mov     ax, [bp+2]
+        call    lcd_tx_hex_word
+        gotoxy  0, 17, LCD
+        print   txt_lcd_page2, LCD
+
+        gotoxy  1, 0, LCD
+        print   txt_lcd_reg_ds, LCD
+        mov     ax, [bp-8]
+        call    lcd_tx_hex_word
+        gotoxy  1, 9, LCD
+        print   txt_lcd_reg_es, LCD
+        mov     ax, [bp-6]
+        call    lcd_tx_hex_word
+
+        gotoxy  2, 0, LCD
+        print   txt_lcd_reg_ss, LCD
+        mov     ax, [bp-4]
+        call    lcd_tx_hex_word
+        gotoxy  2, 9, LCD
+        print   txt_lcd_reg_fl, LCD
+        mov     ax, [bp-2]
+        call    lcd_tx_hex_word
+
+        ; --- ligne 4: FLAGS decodees en 8 lettres (meme ordre que
+        ; l'UART: O D I S Z A P C = OF DF IF SF ZF AF PF CF) -
+        ; MAJUSCULE si le bit est a 1, minuscule si a 0 (+20h, motif
+        ; standard ASCII maj->min). "lcd_goto" (PAS "gotoxy"): ecrit
+        ; directement au LCD sans passer par int10h (aucun "print" de
+        ; chaine ici, seulement des lcd_data au fil de l'eau - voir
+        ; l'en-tete de int10h_print_string: "gotoxy" seul, sans
+        ; "print" a la suite, NE deplace PAS le curseur PHYSIQUE, donc
+        ; ne convient pas ici). Complete a 20 caracteres (5 espaces de
+        ; remplissage finaux) pour ecraser tout residu de la page 1
+        ; (ligne 4 plus courte, "SP=xxxx  BP=xxxx" = 16 caracteres). ---
+        lcd_goto LCD_LINE4
+        mov     dx, [bp-2]               ; DX = FLAGS (relit depuis la pile - le "DX
+                                          ; page" servait seulement a choisir cette
+                                          ; branche, plus besoin maintenant)
+
+        mov     al, 'O'
+        test    dx, 0800h
+        jnz     .p2_of
+        add     al, 20h
+.p2_of: call    lcd_data
+        mov     al, ' '
+        call    lcd_data
+
+        mov     al, 'D'
+        test    dx, 0400h
+        jnz     .p2_df
+        add     al, 20h
+.p2_df: call    lcd_data
+        mov     al, ' '
+        call    lcd_data
+
+        mov     al, 'I'
+        test    dx, 0200h
+        jnz     .p2_if
+        add     al, 20h
+.p2_if: call    lcd_data
+        mov     al, ' '
+        call    lcd_data
+
+        mov     al, 'S'
+        test    dx, 0080h
+        jnz     .p2_sf
+        add     al, 20h
+.p2_sf: call    lcd_data
+        mov     al, ' '
+        call    lcd_data
+
+        mov     al, 'Z'
+        test    dx, 0040h
+        jnz     .p2_zf
+        add     al, 20h
+.p2_zf: call    lcd_data
+        mov     al, ' '
+        call    lcd_data
+
+        mov     al, 'A'
+        test    dx, 0010h
+        jnz     .p2_af
+        add     al, 20h
+.p2_af: call    lcd_data
+        mov     al, ' '
+        call    lcd_data
+
+        mov     al, 'P'
+        test    dx, 0004h
+        jnz     .p2_pf
+        add     al, 20h
+.p2_pf: call    lcd_data
+        mov     al, ' '
+        call    lcd_data
+
+        mov     al, 'C'
+        test    dx, 0001h
+        jnz     .p2_cf
+        add     al, 20h
+.p2_cf: call    lcd_data
+
+        mov     cx, 5                    ; 5 espaces de remplissage finaux (voir
+.p2_pad:                                 ; commentaire ci-dessus - 15+5=20)
+        mov     al, ' '
+        call    lcd_data
+        loop    .p2_pad
+
+.wait_key:
+        call    ps2_get_char
+
+        cmp     al, 27                   ; Echap: retour au sous-menu Dump memory
+        je      .done
+
+        cmp     al, PS2_KEY_LEFT
+        je      .toggle_page
+        cmp     al, PS2_KEY_RIGHT
+        je      .toggle_page
+        jmp     .wait_key                ; touche non pertinente - ignoree, rien
+                                          ; n'a change, pas besoin de redessiner
+
+.toggle_page:
+        xor     si, 1                    ; bascule 0<->1 (page 1 <-> page 2)
+        jmp     .redraw
+
+.done:
+        ; --- IMPORTANT: restaurer AX/BX/CX/DX/SI/DI (empiles APRES
+        ; FLAGS/SS/ES/DS/CS, donc au sommet de la pile en ce point -
+        ; voir l'entree de cette routine) AVANT de liberer l'espace de
+        ; FLAGS/SS/ES/DS/CS avec "add sp,10": faire l'inverse (add sp
+        ; puis pop) depilerait les MAUVAISES valeurs dans AX..DI. ---
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
+        add     sp, 10                   ; libere FLAGS/SS/ES/DS/CS (5 mots, jamais
+                                          ; modifies par cette routine - rien a
+                                          ; restaurer, juste liberer la pile)
+        pop     bp
+        ret
+
+; ============================================================
 ; dump_line
 ; Affiche UNE ligne de 16 octets:
 ;   UART: format complet (adresse/hexa/ascii) - INCHANGE
@@ -2512,6 +2892,49 @@ txt_dump_invalid_range: db      27,'[31m','*** Adresse de fin < adresse de depar
 
 txt_dump_interrupted:   db      27,'[33m','*** Dump interrompu (Echap) ***',27,'[0m',13,10,13,10,0
 
+; ---- registres CPU (voir registers_dump_action) - affichage UART,
+; ---- format "DEBUG.COM": "AX=.. BX=.. CX=.. DX=.. SP=.. BP=.. SI=..
+; ---- DI=.." puis "DS=.. ES=.. SS=.. CS=.. IP=.. FLAGS=xxxx  " suivi
+; ---- des 8 mnemoniques de FLAGS (txt_flag_*_set/clear plus bas) ----
+txt_reg_banniere:       db      27,'[34m','=== Registres CPU (8088) ===',27,'[0m',13,10,0
+txt_reg_ax:             db      'AX=', 0
+txt_reg_bx:             db      '  BX=', 0
+txt_reg_cx:             db      '  CX=', 0
+txt_reg_dx:             db      '  DX=', 0
+txt_reg_sp:             db      '  SP=', 0
+txt_reg_bp:             db      '  BP=', 0
+txt_reg_si:             db      '  SI=', 0
+txt_reg_di:             db      '  DI=', 0
+txt_reg_ds:             db      'DS=', 0
+txt_reg_es:             db      '  ES=', 0
+txt_reg_ss:             db      '  SS=', 0
+txt_reg_cs:             db      '  CS=', 0
+txt_reg_ip:             db      '  IP=', 0
+txt_reg_flags_prefix:   db      '  FLAGS=', 0
+txt_reg_flags_sep:      db      '  ', 0
+
+; ---- mnemoniques FLAGS (convention DEBUG.COM: OV/NV=overflow,
+; ---- DN/UP=direction, EI/DI=interruptions, NG/PL=signe, ZR/NZ=zero,
+; ---- AC/NA=retenue auxiliaire, PE/PO=parite, CY/NC=retenue) -
+; ---- l'etat "actif" (bit=1) est en jaune (voir uart_flag_bit,
+; ---- section macros) pour ressortir a l'oeil sur le terminal ----
+txt_flag_of_set:        db      27,'[33m','OV',27,'[0m',' ',0
+txt_flag_of_clear:      db      'NV', ' ', 0
+txt_flag_df_set:        db      27,'[33m','DN',27,'[0m',' ',0
+txt_flag_df_clear:      db      'UP', ' ', 0
+txt_flag_if_set:        db      27,'[33m','EI',27,'[0m',' ',0
+txt_flag_if_clear:      db      'DI', ' ', 0
+txt_flag_sf_set:        db      27,'[33m','NG',27,'[0m',' ',0
+txt_flag_sf_clear:      db      'PL', ' ', 0
+txt_flag_zf_set:        db      27,'[33m','ZR',27,'[0m',' ',0
+txt_flag_zf_clear:      db      'NZ', ' ', 0
+txt_flag_af_set:        db      27,'[33m','AC',27,'[0m',' ',0
+txt_flag_af_clear:      db      'NA', ' ', 0
+txt_flag_pf_set:        db      27,'[33m','PE',27,'[0m',' ',0
+txt_flag_pf_clear:      db      'PO', ' ', 0
+txt_flag_cf_set:        db      27,'[33m','CY',27,'[0m',' ',0
+txt_flag_cf_clear:      db      'NC', ' ', 0
+
 ; ---- gestionnaire par defaut de l'IVT (voir init_ivt_not_implemented/
 ; ---- int_not_implemented) ----
 txt_int_non_implementee: db     27,'[31m','*** Interruption non implementee ***',27,'[0m',13,10,0
@@ -2531,6 +2954,7 @@ txt_menu_main:          db      27,'[36m','--- Menu principal ---',27,'[0m',13,1
 txt_menu_dump:          db      27,'[36m','--- Menu Dump memory ---',27,'[0m',13,10
                         db      '1) Dump memory',13,10
                         db      '2) Edit RAM',13,10
+                        db      '3) Registres CPU',13,10
                         db      '9) Home menu',13,10,13,10,0
 
 ; ---- invite "Edit RAM" (voir edit_ram_action) ----
@@ -2573,11 +2997,32 @@ lcd_text lcd_txt_menu_main_l2, '2) Dump memory', 20
 lcd_text lcd_txt_menu_main_l3, '3) LED Show on PC', 20
 lcd_text lcd_txt_menu_main_l4, '4) Edit RAM', 20
 
-; ---- menu Dump memory (voir start:) - seules les lignes 1/2/4 sont
-; ---- utilisees (ligne 3 laissee vide par lcd_init) ----
+; ---- menu Dump memory (voir start:) - les 4 lignes sont utilisees
+; ---- depuis l'ajout de l'option "3) Registres CPU" ----
 lcd_text lcd_txt_menu_dump_l1, '1) Dump memory', 20
 lcd_text lcd_txt_menu_dump_l2, '2) Edit RAM', 20
+lcd_text lcd_txt_menu_dump_l3, '3) Registres CPU', 20
 lcd_text lcd_txt_menu_dump_l4, '9) Home menu', 20
+
+; ---- registres CPU (voir registers_dump_action) - prefixes courts
+; ---- (LCD 4x20, contrairement aux prefixes UART txt_reg_* qui
+; ---- incluent leur propre separation) et indicateur de page ----
+txt_lcd_reg_ax:         db      'AX=', 0
+txt_lcd_reg_bx:         db      'BX=', 0
+txt_lcd_reg_cx:         db      'CX=', 0
+txt_lcd_reg_dx:         db      'DX=', 0
+txt_lcd_reg_si:         db      'SI=', 0
+txt_lcd_reg_di:         db      'DI=', 0
+txt_lcd_reg_sp:         db      'SP=', 0
+txt_lcd_reg_bp:         db      'BP=', 0
+txt_lcd_reg_cs:         db      'CS=', 0
+txt_lcd_reg_ds:         db      'DS=', 0
+txt_lcd_reg_es:         db      'ES=', 0
+txt_lcd_reg_ss:         db      'SS=', 0
+txt_lcd_reg_ip:         db      'IP=', 0
+txt_lcd_reg_fl:         db      'FL=', 0
+txt_lcd_page1:          db      '1/2', 0
+txt_lcd_page2:          db      '2/2', 0
 
 ; ---- bandeau ligne1/ligne2 affiche avant chaque action lancee depuis
 ; ---- un menu (lignes 3/4 sont mises a jour en direct par l'action

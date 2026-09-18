@@ -559,6 +559,7 @@ des versions précédentes : chaque action est déclenchée par une touche
 ```
 1) Dump memory
 2) Edit RAM
+3) Registres CPU
 9) Home menu
 ```
 
@@ -680,12 +681,52 @@ d'adresse du LCD (gardée sur l'UART, où la largeur n'est pas limitée).
 | `Q` / `q` | **Enregistre** le tampon dans la RAM réelle, retour au menu |
 | Échap | **Annule** — la RAM réelle n'est pas modifiée, retour au menu |
 
+**Registres CPU** (option 3 du menu Dump — `registers_dump_action`) :
+affiche l'état courant des registres du 8088 (`AX`/`BX`/`CX`/`DX`/`SI`/
+`DI`/`BP`/`SP`/`CS`/`DS`/`ES`/`SS`/`IP`/`FLAGS`). **Capture immédiate à
+l'entrée** (avant le moindre usage des registres généraux comme
+espace de travail pour composer l'affichage) : chaque registre est
+empilé puis relu via `[bp±N]` (`BP` fixé juste après un `push bp` +
+`mov bp, sp`, le même « prologue de trame de pile » qu'un compilateur
+C — les valeurs empilées *avant* ce point, càd `BP` original et
+l'adresse de retour, restent à des décalages **positifs** malgré tous
+les `push` qui suivent, puisque `BP` lui-même ne bouge plus). `IP`
+affiché = l'adresse de retour déjà empilée par le `CALL` qui a mené
+ici — exactement ce qu'un débogueur montrerait à un point d'arrêt
+juste après ce `CALL`. `SP` affiché = celui vu par l'appelant, *avant*
+ce `CALL` (`BP+4` : avant que `CALL` empile `IP` et avant notre propre
+`push bp`) — un simple calcul, jamais relu depuis la pile.
+
+L'UART affiche tout d'un coup, format inspiré de **DEBUG.COM** (le
+débogueur DOS classique), avec les `FLAGS` décodés en mnémoniques
+(`OV`/`NV`, `DN`/`UP`, `EI`/`DI`, `NG`/`PL`, `ZR`/`NZ`, `AC`/`NA`,
+`PE`/`PO`, `CY`/`NC` — dans l'ordre `OF DF IF SF ZF AF PF CF`, le
+mnémonique « actif » en jaune) :
+
+```
+AX=0033  BX=0000  CX=0006  DX=0000  SP=0FFC  BP=0000  SI=0000  DI=0000
+DS=1000  ES=1000  SS=1000  CS=C000  IP=0242  FLAGS=0246  NV UP EI PL NZ NA PO NC
+```
+
+Le LCD (80 caractères, trop peu pour tout à la fois) **pagine sur 2
+écrans** (page 1 : `AX`/`BX`/`CX`/`DX`/`SI`/`DI`/`SP`/`BP` ; page 2 :
+`CS`/`IP`/`DS`/`ES`/`SS`/`FL` + les 8 `FLAGS` décodés en une lettre
+chacun sur la ligne 4, **majuscule si actif, minuscule sinon** —
+`O D I S Z A P C`) :
+
+| Touche | Effet |
+|---|---|
+| Flèches gauche/droite | Bascule entre les 2 pages du LCD |
+| Toute autre touche (sauf Échap) | Ignorée — pas de redessin inutile |
+| Échap | Retour au menu Dump memory |
+
 | Option | Action | Détail |
 |---|---|---|
 | Test RAM | `test_ram` | Teste la RAM 128 Ko, rapporte via UART+LCD (129 024 octets testés depuis l'agrandissement de la zone réservée pour le tampon d'Edit RAM — voir plus bas) |
 | Dump memory | `dump_memory_action` (consolidé) | Demande adresse de départ + de fin (`SEGMENT:OFFSET`), dump via `dump_line` — remplace `rom_dump`/`ram_dump_4k` |
 | LED Show on PC | `effet1` | Inchangée — chenillard sur le Port C |
 | Edit RAM | `edit_ram_action` (par plage, avec tampon) | Voir ci-dessus |
+| Registres CPU | `registers_dump_action` | Voir ci-dessus |
 | Home menu | — | Retour au menu principal depuis le menu Dump |
 
 État partagé (`VAR_SEG`, voir `include/hardware.inc`) : `edit_ram_action`
