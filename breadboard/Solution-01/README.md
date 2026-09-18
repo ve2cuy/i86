@@ -3,14 +3,20 @@
 Firmware ROM pour un ordinateur 8088/8086 assemblé sur breadboard par
 Alain Boudreault (VE2CUY). Au démarrage, la carte :
 
-1. affiche la version de l'application et les paramètres de la
-   connexion UART sur un second LCD, piloté en I2C logiciel (bit-bang) ;
-2. affiche un écran de démarrage sur le LCD parallèle 4×20 pendant
-   1 seconde ;
-3. affiche un **menu interactif** (UART + LCD), piloté au clavier
+1. affiche un écran de démarrage sur le LCD I2C 4×20 (piloté en I2C
+   logiciel, bit-bang) pendant 1 seconde ;
+2. affiche un **menu interactif** (UART + LCD I2C), piloté au clavier
    PS/2, qui reste le comportement normal de la carte tant qu'elle
    est sous tension — voir [Menu interactif](#menu-interactif)
    ci-dessous pour la structure complète.
+
+⚠️ Tout l'affichage LCD (menu, dump, édition, etc.) est passé du LCD
+**parallèle** au LCD **I2C** (voir Directives.md) : le pilote parallèle
+(`lib/lcd.asm`) reste dans le dépôt (ses délais/`lcd_powerup_delay`
+sont d'ailleurs toujours réutilisés par `lib/lcd_i2c.asm`), mais plus
+aucun code du firmware n'écrit sur le LCD parallèle — les broches `PA1`-
+`PA4`/`PA6` qu'il occupait sont donc libres pour une réaffectation
+matérielle (ex. logique du 8259).
 
 Contrairement aux versions précédentes, il n'y a plus de "power-on
 self-test" (POST) qui s'enchaîne automatiquement — chaque test (RAM,
@@ -282,7 +288,7 @@ par du code répété à chaque site d'appel.
 | `def_busy_delay nom, N` | `lib/common.asm` | 5 procédures dupliquées (`lcd_short_delai`, `lcd_delay`, `lcd_delay_long`, `i2c_delay`, `uart_bit_delay`) | **Génère** une boucle d'attente active (`dec bx`/`jnz`) de `N` itérations |
 | `lcd_text label, 'texte', largeur` | `solution-01.asm` | ~15 blocs `db`+`times`+`db 0` dupliqués | **Génère** un texte LCD complété par des espaces à `largeur` colonnes, terminé par `0` |
 | `ascii_or_dot` | `solution-01.asm` | Logique dupliquée dans le dump UART et `i2c_dump_hex_ascii8_line` | Remplace `AL` par `.` s'il n'est pas imprimable (`< 20h` ou `> 7Eh`) |
-| `i2c_dump_hex4` (`TEST_I2C_DUMP`) | `solution-01.asm` | Boucle hexa dupliquée entre `i2c_dump_hex_only_line` et `i2c_dump_hex_ascii8_line` | Affiche 4 octets hexa (`ES:DI`), avance `DI` de 4 |
+| `i2c_dump_hex4` | `solution-01.asm` | Boucle hexa dupliquée entre `i2c_dump_hex_only_line` et `i2c_dump_hex_ascii8_line` | Affiche 4 octets hexa (`ES:DI`), avance `DI` de 4 |
 
 `lcd_goto`/`lcd_show`/`i2c_lcd_goto`/`i2c_lcd_show` sont incluses **avant**
 `start:` (`include/lcd_macros.inc`, comme `delay.inc`, n'émet aucun octet)
@@ -292,11 +298,11 @@ réelles (`lcd_command`, `i2c_lcd_print`, …) restent définies dans
 `lib/lcd.asm`/`lib/lcd_i2c.asm`, inclus après tout le code (voir la
 note dans `solution-01.asm` sur le vecteur de reset).
 
-### Test de performance conditionnel (`TEST_I2C_DUMP`)
+### Affichage du dump mémoire sur le LCD I2C
 
-Active un affichage supplémentaire, sur le LCD I2C, des 16 octets de
-**chaque ligne** d'un dump mémoire (`dump_memory_action`/`dump_line`)
-— 4 octets par ligne sur les 4 lignes du LCD 4×20 :
+`dump_line` affiche les 16 octets de **chaque ligne** d'un dump
+mémoire (`dump_memory_action`) sur le LCD I2C — 4 octets par ligne sur
+les 4 lignes du LCD 4×20 :
 - **Lignes 1 et 3** (`i2c_dump_hex_ascii8_line`) : `"XX XX XX XX "` (ses
   4 octets, en hexadécimal) puis **8 caractères ASCII** — ceux de ce
   groupe de 4 octets **et** du suivant (`.` pour les non imprimables,
@@ -306,29 +312,10 @@ Active un affichage supplémentaire, sur le LCD I2C, des 16 octets de
   seulement (hexadécimal, sans ASCII — déjà couvert par la ligne
   précédente).
 
-En plus de ce qui s'affiche déjà sur le LCD parallèle et l'UART. Sert
-à mesurer/stresser le temps de réponse du LCD I2C : une mise à jour
-complète par ligne du dump (leur nombre dépend désormais de la plage
-saisie — voir la section Menu interactif plus bas).
-Aucun impact sur le comportement normal quand la directive reste
-désactivée : le code correspondant (dans `dump_line` et dans les
-procédures `i2c_dump_hex_only_line`/`i2c_dump_hex_ascii8_line`) est
-entièrement gardé par `%ifdef TEST_I2C_DUMP` / `%endif` et n'est
-simplement pas assemblé.
-
-**Façon recommandée de l'activer — sans modifier le fichier** : passer
-la définition directement à NASM en ligne de commande, avec le flag `-d` :
-
-```sh
-nasm -f bin -d TEST_I2C_DUMP solution-01.asm -o solution-01.bin
-```
-
-Alternative : `solution-01.asm` contient aussi la ligne
-`%define TEST_I2C_DUMP`, **commentée par défaut**, dans le bloc de
-commentaires "TEST_I2C_DUMP" près du haut du fichier (avec
-`STACK_SEG`/`SECONDE`) — la décommenter active la directive de façon
-permanente pour tout `make`/`nasm` lancé sur ce fichier, sans avoir à
-répéter le flag `-d` à chaque fois.
+Ce format (à l'origine un test de performance/stress du LCD I2C,
+conditionnel via `%ifdef TEST_I2C_DUMP`) est devenu l'affichage LCD
+**permanent** de `dump_line` depuis le passage complet du LCD
+parallèle au LCD I2C — la directive `TEST_I2C_DUMP` a été retirée.
 
 ## Fonctions d'accès au clavier PS/2 (`lib/ps2.asm`)
 
@@ -378,11 +365,19 @@ de traduction (`ps2_get_char`) qu'utilise le menu. `MASQUE_PIO` (Port
 B en entrée) est maintenant permanent, donc cette directive ne change
 plus que le choix menu-interactif / diagnostic-brut au démarrage.
 
-Activation (mêmes deux façons que `TEST_I2C_DUMP`) :
+**Façon recommandée de l'activer — sans modifier le fichier** : passer
+la définition directement à NASM en ligne de commande, avec le flag `-d` :
 
 ```sh
 nasm -f bin -d TEST_PS2 solution-01.asm -o solution-01.bin
 ```
+
+Alternative : `solution-01.asm` contient aussi la ligne
+`%define TEST_PS2`, **commentée par défaut**, dans le bloc de
+commentaires "TEST_PS2" près du haut du fichier (avec
+`STACK_SEG`/`SECONDE`) — la décommenter active la directive de façon
+permanente pour tout `make`/`nasm` lancé sur ce fichier, sans avoir à
+répéter le flag `-d` à chaque fois.
 
 ## Interruptions logicielles type BIOS (`INT 10h` / `INT 16h`)
 
@@ -540,10 +535,10 @@ hexadécimales/décimales), sans changement de comportement.
 
 ## Menu interactif
 
-Affiché après le splash, sur l'UART **et** le LCD parallèle (une
-option par ligne). Remplace le POST automatique des versions
-précédentes : chaque action est déclenchée par une touche (clavier
-PS/2), et le menu se redessine après chaque action.
+Affiché après le splash, sur l'UART **et** le LCD I2C (une option par
+ligne). Remplace le POST automatique des versions précédentes : chaque
+action est déclenchée par une touche (clavier PS/2), et le menu se
+redessine après chaque action.
 
 **Menu principal** (3 options — `4) Edit RAM` a été retirée : déjà
 disponible via `2) Memory functions` ci-dessous) :
@@ -576,8 +571,9 @@ Start: 0x0000:0x0000
 End:   0x0000:0x0FFF
 ```
 
-... puis dump (hexadécimal+ASCII sur l'UART, hexadécimal condensé sur
-le LCD[+LCD-I2C si `TEST_I2C_DUMP`]) tous les octets de cette plage
+... puis dump (hexadécimal+ASCII complets sur l'UART ; hexadécimal
+condensé, 4 octets par ligne sur les 4 lignes, avec ASCII sur les
+lignes 1/3, sur le LCD I2C) tous les octets de cette plage
 **physique**, 16 octets par ligne, via `dump_line`. Une seule action
 (`dump_memory_action`) remplace les deux anciennes options fixes
 ("Dump ROM" / "Dump first 4k RAM") : elle fonctionne indifféremment

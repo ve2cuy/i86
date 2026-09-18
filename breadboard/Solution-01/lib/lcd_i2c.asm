@@ -408,6 +408,47 @@ i2c_lcd_print:
 ; ============================================================
 def_tx_hex_nibble i2c_lcd_tx_hex_nibble, i2c_lcd_data
 def_tx_hex_byte   i2c_lcd_tx_hex_byte,   i2c_lcd_tx_hex_nibble
+def_tx_hex_word   i2c_lcd_tx_hex_word,   i2c_lcd_tx_hex_byte
+
+; ============================================================
+; i2c_lcd_tx_dec3
+; Affiche AX (0-999) en decimal, TOUJOURS 3 chiffres avec des zeros
+; de tete (ex: 7 -> "007") - copie exacte de lcd_tx_dec3 (lib/lcd.asm),
+; seule la procedure d'emission d'un caractere change (i2c_lcd_data au
+; lieu de lcd_data). Detruit AX/BX/CX/DX - jamais SI/DI/ES/BP (meme
+; discipline que lcd_tx_dec3/les routines hex).
+; ============================================================
+i2c_lcd_tx_dec3:
+        push    bx
+        push    cx
+        push    dx
+
+        xor     dx, dx
+        mov     bx, 100
+        div     bx              ; AX = centaines, DX = reste (0-99)
+        mov     cl, al          ; CL = chiffre des centaines
+
+        mov     ax, dx
+        xor     dx, dx
+        mov     bx, 10
+        div     bx              ; AX = dizaines, DX = unites
+        mov     ch, dl          ; CH = chiffre des unites
+        mov     bh, al          ; BH = chiffre des dizaines
+
+        mov     al, cl
+        add     al, '0'
+        call    i2c_lcd_data    ; centaines
+        mov     al, bh
+        add     al, '0'
+        call    i2c_lcd_data    ; dizaines
+        mov     al, ch
+        add     al, '0'
+        call    i2c_lcd_data    ; unites
+
+        pop     dx
+        pop     cx
+        pop     bx
+        ret
 
 ; ============================================================
 ; i2c_lcd_init

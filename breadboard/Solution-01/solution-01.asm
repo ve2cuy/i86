@@ -75,18 +75,6 @@ STACK_SEG       equ     1000h
 SECONDE         equ     1000            ; 1 seconde = 1000 ms
 
 ; ------------------------------------------------------------
-; TEST_I2C_DUMP (decommenter la ligne %define ci-dessous pour
-; activer): affiche en plus, sur le LCD I2C (PCF8574 0x27), les 16
-; octets en hexadecimal de CHAQUE ligne d'un dump memoire
-; (dump_memory_action/dump_line), 4 octets par ligne sur les 4 lignes
-; du LCD 4x20 - en plus de ce qui s'affiche deja sur le LCD parallele
-; et l'UART. Sert a mesurer/stresser le temps de reponse du LCD I2C
-; (une mise a jour complete par ligne du dump), voir Directives.md.
-; Desactive par defaut (aucun impact sur le comportement normal).
-; %define TEST_I2C_DUMP
-; ------------------------------------------------------------
-
-; ------------------------------------------------------------
 ; TEST_PS2 (decommenter la ligne %define ci-dessous pour activer):
 ; diagnostic BAS NIVEAU du clavier PS/2 (PB0=CLOCK, PB1=DATA - voir
 ; lib/ps2.asm) - REMPLACE le menu interactif par une boucle infinie
@@ -105,8 +93,8 @@ SECONDE         equ     1000            ; 1 seconde = 1000 ms
 
 ; --- ascii_or_dot: remplace AL par '.' s'il n'est pas imprimable
 ; --- (< 20h ou > 7Eh) - motif utilise par le dump ASCII UART
-; --- (dump_line) ET le dump ASCII du LCD I2C (i2c_dump_hex_ascii8_line,
-; --- TEST_I2C_DUMP), auparavant duplique dans les 2 routines. ---
+; --- (dump_line) ET le dump ASCII du LCD I2C (i2c_dump_hex_ascii8_line),
+; --- auparavant duplique dans les 2 routines. ---
 %macro ascii_or_dot 0
         cmp     al, 20h
         jb      %%not_printable
@@ -239,39 +227,22 @@ start:
         jmp     .ps2_loop
 %endif
 
-        ; --- LCD I2C (PCF8574 0x27, SDA=PA5, SCL=PA0): affiche la
-        ; version de l'application et les parametres de la connexion
-        ; UART, une seule fois au demarrage. PA0 est partagee avec D4
-        ; du LCD PARALLELE mais sans risque (voir lib/lcd_i2c.asm) -
-        ; donc PAS besoin d'etre place avant lcd_init comme le serait
-        ; un partage avec E; place ici simplement pour rester groupe
-        ; avec le reste de l'init materielle ---
-        call    i2c_lcd_init
-        gotoxy  0, 0, LCDI2C
-        print   lcd_txt_splash_l1, LCDI2C      ; "Breadboard 8088"
-        gotoxy  1, 0, LCDI2C
-        print   lcd_txt_splash_l2, LCDI2C      ; "Version 1.0"
-        gotoxy  2, 0, LCDI2C
-        print   i2c_txt_uart_params, LCDI2C    ; "UART: 9600 8N1"
-        gotoxy  3, 0, LCDI2C
-        print   lcd_txt_splash_l4, LCDI2C      ; "(c) VE2CUY 2026"
-
         ; --- Ecran de demarrage: affiche une seule fois (pas a chaque
         ; cycle de .ici, contrairement au reste de l'affichage LCD),
         ; pendant 1 seconde, avant d'entrer dans la boucle principale.
         ; Affiche via INT 10h (gotoxy/print, voir include/lcd_macros.inc)
-        ; plutot que lcd_goto/lcd_print directement - premier usage
+        ; plutot que i2c_lcd_goto/i2c_lcd_print directement - premier usage
         ; reel de l'interface "esprit BIOS" (voir int10h_handler,
         ; README.md) ---
-        call    lcd_init
-        gotoxy  0, 0, LCD
-        print   lcd_txt_splash_l1, LCD
-        gotoxy  1, 0, LCD
-        print   lcd_txt_splash_l2, LCD
-        gotoxy  2, 0, LCD
-        print   lcd_txt_splash_l3, LCD
-        gotoxy  3, 0, LCD
-        print   lcd_txt_splash_l4, LCD
+        call    i2c_lcd_init
+        gotoxy  0, 0, LCDI2C
+        print   lcd_txt_splash_l1, LCDI2C
+        gotoxy  1, 0, LCDI2C
+        print   lcd_txt_splash_l2, LCDI2C
+        gotoxy  2, 0, LCDI2C
+        print   lcd_txt_splash_l3, LCDI2C
+        gotoxy  3, 0, LCDI2C
+        print   lcd_txt_splash_l4, LCDI2C
         delay_ms (1*SECONDE)
 
         ; --- Bandeau d'identification: affiche une seule fois, avant
@@ -291,24 +262,24 @@ start:
 ; pressee n'est pas une des options listees.
 ; ============================================================
 .main_menu:
-        call    lcd_init                ; ecran propre pour le menu
+        call    i2c_lcd_init                ; ecran propre pour le menu
         print   txt_menu_main, UART
-        gotoxy  0, 0, LCD
-        print   lcd_txt_menu_main_l1, LCD
-        gotoxy  1, 0, LCD
-        print   lcd_txt_menu_main_l2, LCD
-        gotoxy  2, 0, LCD
-        print   lcd_txt_menu_main_l3, LCD
+        gotoxy  0, 0, LCDI2C
+        print   lcd_txt_menu_main_l1, LCDI2C
+        gotoxy  1, 0, LCDI2C
+        print   lcd_txt_menu_main_l2, LCDI2C
+        gotoxy  2, 0, LCDI2C
+        print   lcd_txt_menu_main_l3, LCDI2C
 
         call    ps2_get_char            ; bloque jusqu'a une touche reconnue
 
         cmp     al, '1'
         jne     .main_2
-        call    lcd_init
-        gotoxy  0, 0, LCD
-        print   lcd_txt_run_ram_l1, LCD
-        gotoxy  1, 0, LCD
-        print   lcd_txt_run_ram_l2, LCD
+        call    i2c_lcd_init
+        gotoxy  0, 0, LCDI2C
+        print   lcd_txt_run_ram_l1, LCDI2C
+        gotoxy  1, 0, LCDI2C
+        print   lcd_txt_run_ram_l2, LCDI2C
         call    test_ram                ; teste toute la RAM (128K), rapporte via UART+LCD
         jmp     .main_menu
 .main_2:
@@ -318,28 +289,28 @@ start:
 .main_3:
         cmp     al, '3'
         jne     .main_menu              ; touche non reconnue - redessine le menu
-        call    lcd_init
-        gotoxy  0, 0, LCD
-        print   lcd_txt_run_led_l1, LCD
-        gotoxy  1, 0, LCD
-        print   lcd_txt_run_led_l2, LCD
-        gotoxy  3, 0, LCD
-        print   lcd_txt_run_led_l4, LCD ; texte fixe (ligne 3 = progression
+        call    i2c_lcd_init
+        gotoxy  0, 0, LCDI2C
+        print   lcd_txt_run_led_l1, LCDI2C
+        gotoxy  1, 0, LCDI2C
+        print   lcd_txt_run_led_l2, LCDI2C
+        gotoxy  3, 0, LCDI2C
+        print   lcd_txt_run_led_l4, LCDI2C ; texte fixe (ligne 3 = progression
                                          ; live, mise a jour par effet1)
         call    effet1                  ; animation Port C (chenillard)
         jmp     .main_menu
 
 .dump_menu:
-        call    lcd_init
+        call    i2c_lcd_init
         print   txt_menu_dump, UART
-        gotoxy  0, 0, LCD
-        print   lcd_txt_menu_dump_l1, LCD
-        gotoxy  1, 0, LCD
-        print   lcd_txt_menu_dump_l2, LCD
-        gotoxy  2, 0, LCD
-        print   lcd_txt_menu_dump_l3, LCD
-        gotoxy  3, 0, LCD
-        print   lcd_txt_menu_dump_l4, LCD
+        gotoxy  0, 0, LCDI2C
+        print   lcd_txt_menu_dump_l1, LCDI2C
+        gotoxy  1, 0, LCDI2C
+        print   lcd_txt_menu_dump_l2, LCDI2C
+        gotoxy  2, 0, LCDI2C
+        print   lcd_txt_menu_dump_l3, LCDI2C
+        gotoxy  3, 0, LCDI2C
+        print   lcd_txt_menu_dump_l4, LCDI2C
 
         call    ps2_get_char
 
@@ -514,9 +485,9 @@ mem_calc_physical:
 ; DEPART puis une adresse de FIN, chacune saisie au clavier sous la
 ; forme SEGMENT:OFFSET (4+4 chiffres hexa, retour arriere pour
 ; corriger - voir ps2_read_hex_editable), puis affiche en
-; hexadecimal+ASCII (UART) et hexadecimal condense (LCD[+LCD-I2C si
-; TEST_I2C_DUMP]) tous les octets de cette plage physique, 16 octets
-; par ligne, via dump_line (inchangee).
+; hexadecimal+ASCII (UART) et hexadecimal condense (LCD I2C) tous les
+; octets de cette plage physique, 16 octets par ligne, via dump_line
+; (inchangee).
 ;
 ; Fonctionne indifferemment pour la ROM (ex: C000:0000 a F000:FFFF
 ; pour toute la ROM, 256 Ko), la RAM (ex: 0000:0000 a 1000:FFFF pour
@@ -562,7 +533,7 @@ mem_calc_physical:
 ; Limitation connue (affichage seulement): la ligne 4 du LCD affiche
 ; desormais "Ligne: NNN" (numero de la ligne courante, SANS total -
 ; contrairement a l'ancien "NNN/257" fixe, devenu incorrect des que
-; la taille de la plage varie). lcd_tx_dec3 n'affiche que 3 chiffres
+; la taille de la plage varie). i2c_lcd_tx_dec3 n'affiche que 3 chiffres
 ; (0-999): au-dela de 999 lignes (15984 octets) ce numero redevient
 ; incorrect (cosmetique seulement, voir Directives.md) - le dump
 ; UART, lui, reste toujours exact quelle que soit la taille de la
@@ -578,13 +549,13 @@ dump_memory_action:
         push    bp
         push    es
 
-        call    lcd_init
+        call    i2c_lcd_init
 
         ; --- adresse de depart (ligne 1 du LCD) ---
         mov     si, txt_dump_start_prefix       ; "Start: 0x"
         call    uart_tx_string
         mov     si, txt_dump_start_prefix
-        lcd_show LCD_LINE1
+        i2c_lcd_show LCD_LINE1
         mov     cl, 4
         mov     ah, (LCD_LINE1 & 07Fh) + 9      ; 9 = long. de "Start: 0x"
         call    ps2_read_hex_editable           ; BX = segment de depart
@@ -596,7 +567,7 @@ dump_memory_action:
         mov     si, txt_dump_seg_off_sep        ; ":0x"
         call    uart_tx_string
         mov     si, txt_dump_seg_off_sep
-        call    lcd_print
+        call    i2c_lcd_print
         mov     cl, 4
         mov     ah, (LCD_LINE1 & 07Fh) + 16     ; 16 = long. de "Start: 0xSSSS:0x"
         call    ps2_read_hex_editable           ; BX = offset de depart
@@ -613,7 +584,7 @@ dump_memory_action:
         mov     si, txt_dump_end_prefix         ; "End:   0x"
         call    uart_tx_string
         mov     si, txt_dump_end_prefix
-        lcd_show LCD_LINE2
+        i2c_lcd_show LCD_LINE2
         mov     cl, 4
         mov     ah, (LCD_LINE2 & 07Fh) + 9      ; 9 = long. de "End:   0x"
         call    ps2_read_hex_editable           ; BX = segment de fin
@@ -625,7 +596,7 @@ dump_memory_action:
         mov     si, txt_dump_seg_off_sep
         call    uart_tx_string
         mov     si, txt_dump_seg_off_sep
-        call    lcd_print
+        call    i2c_lcd_print
         mov     cl, 4
         mov     ah, (LCD_LINE2 & 07Fh) + 16     ; 16 = long. de "End:   0xSSSS:0x"
         call    ps2_read_hex_editable           ; BX = offset de fin
@@ -886,13 +857,13 @@ edit_ram_action:
         push    di
         push    es
 
-        call    lcd_init                ; ecran propre pour la saisie
+        call    i2c_lcd_init                ; ecran propre pour la saisie
 
         ; --- adresse de depart ---
         mov     si, txt_edit_address_prefix
         call    uart_tx_string
         mov     si, txt_edit_address_prefix
-        lcd_show LCD_LINE1
+        i2c_lcd_show LCD_LINE1
         mov     cl, 4
         mov     ah, (LCD_LINE1 & 07Fh) + 11     ; 11 = longueur de "Address: 0x"
         call    ps2_read_hex_editable           ; BX = adresse saisie
@@ -916,7 +887,7 @@ edit_ram_action:
         mov     si, txt_edit_size_prefix
         call    uart_tx_string
         mov     si, txt_edit_size_prefix
-        lcd_show LCD_LINE2
+        i2c_lcd_show LCD_LINE2
         mov     cl, 4
         mov     ah, (LCD_LINE2 & 07Fh) + 11     ; 11 = longueur de "Size:    0x"
         call    ps2_read_hex_editable           ; BX = taille saisie
@@ -1206,7 +1177,7 @@ edit_ram_draw_grid:
         push    bp
         push    es
 
-        call    lcd_init
+        call    i2c_lcd_init
 
         xor     si, si                  ; SI = ligne VISIBLE courante (0-3)
 .row_loop:
@@ -1227,20 +1198,20 @@ edit_ram_draw_grid:
         ; --- selectionne la ligne LCD (0-3 -> LCD_LINE1-4) ---
         cmp     si, 0
         jne     .row_not0
-        lcd_goto LCD_LINE1
+        i2c_lcd_goto LCD_LINE1
         jmp     .row_go
 .row_not0:
         cmp     si, 1
         jne     .row_not1
-        lcd_goto LCD_LINE2
+        i2c_lcd_goto LCD_LINE2
         jmp     .row_go
 .row_not1:
         cmp     si, 2
         jne     .row_not2
-        lcd_goto LCD_LINE3
+        i2c_lcd_goto LCD_LINE3
         jmp     .row_go
 .row_not2:
-        lcd_goto LCD_LINE4
+        i2c_lcd_goto LCD_LINE4
 .row_go:
         ; --- adresse REELLE de cette ligne (EDIT_BASE_OFF + DI), sur le
         ; LCD ET l'UART. Sur le LCD: "SSSS:" (EDIT_ADDR_LABEL_WIDTH = 5
@@ -1262,9 +1233,9 @@ edit_ram_draw_grid:
         mov     ax, [bp]
         add     ax, di                  ; AX = adresse reelle de cette ligne
         push    ax
-        call    lcd_tx_hex_word
+        call    i2c_lcd_tx_hex_word
         mov     al, ':'
-        call    lcd_data
+        call    i2c_lcd_data
         pop     ax
         call    uart_tx_hex_word
         mov     al, ':'
@@ -1290,13 +1261,13 @@ edit_ram_draw_grid:
         cmp     dh, bl
         jae     .col_pad
         mov     al, [bp]
-        mov     ah, al                  ; AH = copie (survit a lcd_tx_hex_byte -
+        mov     ah, al                  ; AH = copie (survit a i2c_lcd_tx_hex_byte -
                                           ; jamais touche, voir def_tx_hex_*)
-        call    lcd_tx_hex_byte
+        call    i2c_lcd_tx_hex_byte
         mov     al, ah
         call    uart_tx_hex_byte
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
         mov     al, ' '
         call    uart_tx_byte
         inc     bp
@@ -1306,11 +1277,11 @@ edit_ram_draw_grid:
         ; partielle: espaces sur le LCD seulement (garde la grille
         ; alignee) - rien sur l'UART ---
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
 .col_next:
         inc     dh
         cmp     dh, EDIT_COLS
@@ -1407,9 +1378,9 @@ edit_ram_place_cursor:
         call    edit_ram_cell_ddram
         mov     al, ah
         or      al, 80h
-        call    lcd_command
+        call    i2c_lcd_command
         mov     al, 00001111b    ; Display ON, curseur ON, clignotement ON
-        call    lcd_command
+        call    i2c_lcd_command
         pop     ax
         ret
 
@@ -1730,7 +1701,7 @@ registers_dump_action:
         push    si                       ; [bp-20] = SI
         push    di                       ; [bp-22] = DI
 
-        call    lcd_init                 ; ecran LCD propre pour cet affichage
+        call    i2c_lcd_init                 ; ecran LCD propre pour cet affichage
 
         ; ---------------------------------------------------------
         ; UART: chaque registre affiche en HEXADECIMAL PUIS EN
@@ -1832,7 +1803,7 @@ registers_dump_action:
         ; recharge DX avec la valeur de FLAGS pour son decodage en
         ; lettres (voir plus bas, "mov dx,[bp-2]"), ce qui ecraserait
         ; un numero de page qui y aurait ete range - SI, lui, n'est
-        ; JAMAIS touche par gotoxy/print/lcd_tx_hex_word/lcd_data/
+        ; JAMAIS touche par gotoxy/print/i2c_lcd_tx_hex_word/i2c_lcd_data/
         ; ps2_get_char (tous le preservent - voir leurs en-tetes
         ; respectifs), donc stable sur tout ce sous-flux. La valeur
         ; ORIGINALE de SI (celle de l'appelant) a deja ete affichee
@@ -1847,88 +1818,88 @@ registers_dump_action:
         jmp     .draw_page2
 
 .draw_page1:
-        gotoxy  0, 0, LCD
-        print   txt_lcd_reg_ax, LCD
+        gotoxy  0, 0, LCDI2C
+        print   txt_lcd_reg_ax, LCDI2C
         mov     ax, [bp-12]
-        call    lcd_tx_hex_word
-        gotoxy  0, 9, LCD
-        print   txt_lcd_reg_bx, LCD
+        call    i2c_lcd_tx_hex_word
+        gotoxy  0, 9, LCDI2C
+        print   txt_lcd_reg_bx, LCDI2C
         mov     ax, [bp-14]
-        call    lcd_tx_hex_word
-        gotoxy  0, 17, LCD
-        print   txt_lcd_page1, LCD
+        call    i2c_lcd_tx_hex_word
+        gotoxy  0, 17, LCDI2C
+        print   txt_lcd_page1, LCDI2C
 
-        gotoxy  1, 0, LCD
-        print   txt_lcd_reg_cx, LCD
+        gotoxy  1, 0, LCDI2C
+        print   txt_lcd_reg_cx, LCDI2C
         mov     ax, [bp-16]
-        call    lcd_tx_hex_word
-        gotoxy  1, 9, LCD
-        print   txt_lcd_reg_dx, LCD
+        call    i2c_lcd_tx_hex_word
+        gotoxy  1, 9, LCDI2C
+        print   txt_lcd_reg_dx, LCDI2C
         mov     ax, [bp-18]
-        call    lcd_tx_hex_word
+        call    i2c_lcd_tx_hex_word
 
-        gotoxy  2, 0, LCD
-        print   txt_lcd_reg_si, LCD
+        gotoxy  2, 0, LCDI2C
+        print   txt_lcd_reg_si, LCDI2C
         mov     ax, [bp-20]
-        call    lcd_tx_hex_word
-        gotoxy  2, 9, LCD
-        print   txt_lcd_reg_di, LCD
+        call    i2c_lcd_tx_hex_word
+        gotoxy  2, 9, LCDI2C
+        print   txt_lcd_reg_di, LCDI2C
         mov     ax, [bp-22]
-        call    lcd_tx_hex_word
+        call    i2c_lcd_tx_hex_word
 
-        gotoxy  3, 0, LCD
-        print   txt_lcd_reg_sp, LCD
+        gotoxy  3, 0, LCDI2C
+        print   txt_lcd_reg_sp, LCDI2C
         mov     ax, bp
         add     ax, 4                    ; SP vu par l'appelant (voir en-tete)
-        call    lcd_tx_hex_word
-        gotoxy  3, 9, LCD
-        print   txt_lcd_reg_bp, LCD
+        call    i2c_lcd_tx_hex_word
+        gotoxy  3, 9, LCDI2C
+        print   txt_lcd_reg_bp, LCDI2C
         mov     ax, [bp+0]
-        call    lcd_tx_hex_word
+        call    i2c_lcd_tx_hex_word
         jmp     .wait_key
 
 .draw_page2:
-        gotoxy  0, 0, LCD
-        print   txt_lcd_reg_cs, LCD
+        gotoxy  0, 0, LCDI2C
+        print   txt_lcd_reg_cs, LCDI2C
         mov     ax, [bp-10]
-        call    lcd_tx_hex_word
-        gotoxy  0, 9, LCD
-        print   txt_lcd_reg_ip, LCD
+        call    i2c_lcd_tx_hex_word
+        gotoxy  0, 9, LCDI2C
+        print   txt_lcd_reg_ip, LCDI2C
         mov     ax, [bp+2]
-        call    lcd_tx_hex_word
-        gotoxy  0, 17, LCD
-        print   txt_lcd_page2, LCD
+        call    i2c_lcd_tx_hex_word
+        gotoxy  0, 17, LCDI2C
+        print   txt_lcd_page2, LCDI2C
 
-        gotoxy  1, 0, LCD
-        print   txt_lcd_reg_ds, LCD
+        gotoxy  1, 0, LCDI2C
+        print   txt_lcd_reg_ds, LCDI2C
         mov     ax, [bp-8]
-        call    lcd_tx_hex_word
-        gotoxy  1, 9, LCD
-        print   txt_lcd_reg_es, LCD
+        call    i2c_lcd_tx_hex_word
+        gotoxy  1, 9, LCDI2C
+        print   txt_lcd_reg_es, LCDI2C
         mov     ax, [bp-6]
-        call    lcd_tx_hex_word
+        call    i2c_lcd_tx_hex_word
 
-        gotoxy  2, 0, LCD
-        print   txt_lcd_reg_ss, LCD
+        gotoxy  2, 0, LCDI2C
+        print   txt_lcd_reg_ss, LCDI2C
         mov     ax, [bp-4]
-        call    lcd_tx_hex_word
-        gotoxy  2, 9, LCD
-        print   txt_lcd_reg_fl, LCD
+        call    i2c_lcd_tx_hex_word
+        gotoxy  2, 9, LCDI2C
+        print   txt_lcd_reg_fl, LCDI2C
         mov     ax, [bp-2]
-        call    lcd_tx_hex_word
+        call    i2c_lcd_tx_hex_word
 
         ; --- ligne 4: FLAGS decodees en 8 lettres (meme ordre que
         ; l'UART: O D I S Z A P C = OF DF IF SF ZF AF PF CF) -
         ; MAJUSCULE si le bit est a 1, minuscule si a 0 (+20h, motif
-        ; standard ASCII maj->min). "lcd_goto" (PAS "gotoxy"): ecrit
+        ; standard ASCII maj->min). "i2c_lcd_goto" (PAS "gotoxy"): ecrit
         ; directement au LCD sans passer par int10h (aucun "print" de
-        ; chaine ici, seulement des lcd_data au fil de l'eau - voir
+        ; chaine ici, seulement des i2c_lcd_data au fil de l'eau - voir
         ; l'en-tete de int10h_print_string: "gotoxy" seul, sans
         ; "print" a la suite, NE deplace PAS le curseur PHYSIQUE, donc
         ; ne convient pas ici). Complete a 20 caracteres (5 espaces de
         ; remplissage finaux) pour ecraser tout residu de la page 1
         ; (ligne 4 plus courte, "SP=xxxx  BP=xxxx" = 16 caracteres). ---
-        lcd_goto LCD_LINE4
+        i2c_lcd_goto LCD_LINE4
         mov     dx, [bp-2]               ; DX = FLAGS (relit depuis la pile - le "DX
                                           ; page" servait seulement a choisir cette
                                           ; branche, plus besoin maintenant)
@@ -1937,68 +1908,68 @@ registers_dump_action:
         test    dx, 0800h
         jnz     .p2_of
         add     al, 20h
-.p2_of: call    lcd_data
+.p2_of: call    i2c_lcd_data
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
 
         mov     al, 'D'
         test    dx, 0400h
         jnz     .p2_df
         add     al, 20h
-.p2_df: call    lcd_data
+.p2_df: call    i2c_lcd_data
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
 
         mov     al, 'I'
         test    dx, 0200h
         jnz     .p2_if
         add     al, 20h
-.p2_if: call    lcd_data
+.p2_if: call    i2c_lcd_data
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
 
         mov     al, 'S'
         test    dx, 0080h
         jnz     .p2_sf
         add     al, 20h
-.p2_sf: call    lcd_data
+.p2_sf: call    i2c_lcd_data
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
 
         mov     al, 'Z'
         test    dx, 0040h
         jnz     .p2_zf
         add     al, 20h
-.p2_zf: call    lcd_data
+.p2_zf: call    i2c_lcd_data
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
 
         mov     al, 'A'
         test    dx, 0010h
         jnz     .p2_af
         add     al, 20h
-.p2_af: call    lcd_data
+.p2_af: call    i2c_lcd_data
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
 
         mov     al, 'P'
         test    dx, 0004h
         jnz     .p2_pf
         add     al, 20h
-.p2_pf: call    lcd_data
+.p2_pf: call    i2c_lcd_data
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
 
         mov     al, 'C'
         test    dx, 0001h
         jnz     .p2_cf
         add     al, 20h
-.p2_cf: call    lcd_data
+.p2_cf: call    i2c_lcd_data
 
         mov     cx, 5                    ; 5 espaces de remplissage finaux (voir
 .p2_pad:                                 ; commentaire ci-dessus - 15+5=20)
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
         loop    .p2_pad
 
 .wait_key:
@@ -2087,7 +2058,7 @@ edit_run_action:
         push    di
         push    es
 
-        call    lcd_init
+        call    i2c_lcd_init
 
         ; --- initialise le DEBUT de la RAM reelle (1000:0000) avec un
         ; petit programme de test par defaut (B8 34 12 CB = "mov
@@ -2286,7 +2257,7 @@ edit_run_byte_value:
         mov     al, dl
         call    uart_tx_hex_nibble
         mov     al, dl
-        call    lcd_tx_hex_nibble
+        call    i2c_lcd_tx_hex_nibble
         inc     dh
         cmp     dh, 2
         jb      .next_key
@@ -2307,13 +2278,13 @@ edit_run_byte_value:
         mov     al, ah
         add     al, dh
         or      al, 80h
-        call    lcd_command
+        call    i2c_lcd_command
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
         mov     al, ah
         add     al, dh
         or      al, 80h
-        call    lcd_command
+        call    i2c_lcd_command
         jmp     .next_key
 
 .commit:
@@ -2536,11 +2507,13 @@ edit_run_execute_and_show:
 ; dump_line
 ; Affiche UNE ligne de 16 octets:
 ;   UART: format complet (adresse/hexa/ascii) - INCHANGE
-;   LCD (4x20):
-;     ligne 2 = adresse "SSSS:OOOO"
-;     ligne 3 = apercu des 7 premiers octets en hexadecimal
-;     ligne 4 = "Ligne: NNN" (numero de cette ligne, sans total - voir
-;               dump_memory_action)
+;   LCD I2C (4x20): dump complet des 16 octets en hexadecimal, 4 par
+;     ligne sur les 4 lignes - ASCII (8 caracteres/groupe de 8 octets)
+;     affiche seulement sur les lignes 1 et 3 (voir
+;     i2c_dump_hex_ascii8_line) - anciennement reserve au LCD I2C
+;     SECONDAIRE derriere TEST_I2C_DUMP (voir Directives.md), devenu
+;     l'AFFICHAGE PRIMAIRE (et seul) depuis le passage complet du LCD
+;     parallele au LCD I2C.
 ;
 ; Entree:  ES:DI = adresse de depart de la ligne (16 octets)
 ;          BX = numero de cette ligne (1-based, prepare par
@@ -2554,54 +2527,6 @@ edit_run_execute_and_show:
 ;          d'utiliser une instruction "loop").
 ; ============================================================
 dump_line:
-        ; --- LCD: adresse de cette ligne (avant de l'envoyer sur l'UART,
-        ; pour que le LCD annonce le bloc au moment ou il part) ---
-        lcd_goto LCD_LINE2
-        mov     ax, es
-        call    lcd_tx_hex_word
-        mov     al, ':'
-        call    lcd_data
-        mov     ax, di
-        call    lcd_tx_hex_word
-        mov     si, lcd_txt_dump_pad    ; complete a 20 caracteres (9 utilises)
-        call    lcd_print
-
-        ; --- Ligne 3 du LCD: apercu des 7 premiers octets en hexa
-        ; (7*2 chiffres + 6 espaces = 20 caracteres exactement) ---
-        lcd_goto LCD_LINE3
-        push    di              ; DI va temporairement avancer pour la lecture -
-                                 ; restaure avant de continuer (l'appelant, et le
-                                 ; bloc UART plus bas, ont besoin de la valeur
-                                 ; d'origine)
-        mov     cx, 7
-.lcd_preview_loop:
-        mov     al, [es:di]
-        call    lcd_tx_hex_byte
-        cmp     cx, 1
-        je      .lcd_preview_last
-        mov     al, ' '
-        call    lcd_data
-.lcd_preview_last:
-        inc     di
-        loop    .lcd_preview_loop
-        pop     di
-
-        ; --- Ligne 4 du LCD: numero de cette ligne (BX prepare par
-        ; dump_memory_action) ---
-        lcd_goto LCD_LINE4
-        mov     si, lcd_txt_ligne_prefix
-        call    lcd_print
-        mov     ax, bx
-        call    lcd_tx_dec3
-        mov     si, lcd_txt_ligne_suffix
-        call    lcd_print
-
-%ifdef TEST_I2C_DUMP
-        ; --- LCD I2C (TEST_I2C_DUMP): dump complet des 16 octets en
-        ; hexadecimal, 4 par ligne sur les 4 lignes du LCD 4x20 - voir
-        ; la note pres de %define TEST_I2C_DUMP en haut du fichier.
-        ; ASCII (8 caracteres/groupe de 8 octets) affiche seulement
-        ; sur les lignes 1 et 3 - voir i2c_dump_hex_ascii8_line ---
         push    di
         i2c_lcd_goto LCD_LINE1
         call    i2c_dump_hex_ascii8_line       ; hexa bytes[0:4] + ascii bytes[0:8]
@@ -2612,7 +2537,6 @@ dump_line:
         i2c_lcd_goto LCD_LINE4
         call    i2c_dump_hex_only_line         ; hexa bytes[12:16] seulement
         pop     di
-%endif
 
         ; --- UART: adresse reelle ES:DI ---
         mov     ax, es
@@ -2654,7 +2578,6 @@ dump_line:
         call    uart_tx_string
         ret
 
-%ifdef TEST_I2C_DUMP
 ; --- i2c_dump_hex4: affiche les 4 octets ES:DI en hexadecimal
 ; --- (separes par un espace) sur le LCD I2C, avance DI de 4 -
 ; --- factorise entre i2c_dump_hex_only_line et
@@ -2674,7 +2597,7 @@ dump_line:
 %endmacro
 
 ; ============================================================
-; i2c_dump_hex_only_line (TEST_I2C_DUMP uniquement)
+; i2c_dump_hex_only_line
 ; Affiche 4 octets en hexadecimal (separes par un espace), SANS
 ; ASCII - utilisee pour les lignes 2 et 4 (voir dump_line;
 ; i2c_dump_hex_ascii8_line, pour les lignes 1 et 3, affiche deja
@@ -2692,7 +2615,7 @@ i2c_dump_hex_only_line:
         ret
 
 ; ============================================================
-; i2c_dump_hex_ascii8_line (TEST_I2C_DUMP uniquement)
+; i2c_dump_hex_ascii8_line
 ; Affiche 4 octets en hexadecimal (separes par un espace), un espace,
 ; puis les 8 caracteres ASCII correspondant a CE groupe de 4 octets
 ; ET AU SUIVANT (ou '.' si non imprimable, meme regle que le dump
@@ -2733,7 +2656,6 @@ i2c_dump_hex_ascii8_line:
         pop     cx
         pop     ax
         ret
-%endif
 
 ; ============================================================
 ; msg_banniere
@@ -2821,36 +2743,36 @@ msg_bloc_progression:
         ; --- Ligne 2 du LCD: plage complete du bloc "SSSS:OOOO-SSSS:OOOO",
         ; miroir exact de ce qui part sur l'UART (19 caracteres - avant,
         ; sur 16 colonnes, seule l'adresse de DEBUT tenait) ---
-        lcd_goto LCD_LINE2
+        i2c_lcd_goto LCD_LINE2
 
         mov     ax, es
-        call    lcd_tx_hex_word
+        call    i2c_lcd_tx_hex_word
         mov     al, ':'
-        call    lcd_data
+        call    i2c_lcd_data
         mov     ax, di
         sub     ax, 0400h       ; ax = debut du bloc (di - 1024)
-        call    lcd_tx_hex_word
+        call    i2c_lcd_tx_hex_word
 
         mov     al, '-'
-        call    lcd_data
+        call    i2c_lcd_data
 
         mov     ax, es
-        call    lcd_tx_hex_word
+        call    i2c_lcd_tx_hex_word
         mov     al, ':'
-        call    lcd_data
+        call    i2c_lcd_data
         mov     ax, di
         dec     ax              ; ax = fin du bloc (di - 1)
-        call    lcd_tx_hex_word
+        call    i2c_lcd_tx_hex_word
 
         ; --- Ligne 3 du LCD: etat en toutes lettres ---
         cmp     bp, 0
         je      .lcd_ok
-        gotoxy  2, 0, LCD
-        print   lcd_txt_etat_defaut, LCD
+        gotoxy  2, 0, LCDI2C
+        print   lcd_txt_etat_defaut, LCDI2C
         jmp     .lcd_etat_fin
 .lcd_ok:
-        gotoxy  2, 0, LCD
-        print   lcd_txt_etat_ok, LCD
+        gotoxy  2, 0, LCDI2C
+        print   lcd_txt_etat_ok, LCDI2C
 .lcd_etat_fin:
 
         ; --- Ligne 4 du LCD: compteurs cumulatifs "Bloc:NNN/127 Def:NNN"
@@ -2867,17 +2789,17 @@ msg_bloc_progression:
         pop     di
         pop     es
 
-        lcd_goto LCD_LINE4
+        i2c_lcd_goto LCD_LINE4
         mov     si, lcd_txt_bloc_prefix
-        call    lcd_print
+        call    i2c_lcd_print
         mov     al, dl
         xor     ah, ah
-        call    lcd_tx_dec3
+        call    i2c_lcd_tx_dec3
         mov     si, lcd_txt_bloc_mid
-        call    lcd_print
+        call    i2c_lcd_print
         mov     al, dh
         xor     ah, ah
-        call    lcd_tx_dec3
+        call    i2c_lcd_tx_dec3
 
         mov     bp, 0           ; reinitialise le drapeau pour le prochain bloc
         ret
@@ -2996,14 +2918,14 @@ effet1:
         ; modifie, et les routines LCD le preservent de toute facon
         ; (meme discipline que porta_write/uart_tx_byte). ---
         push    ax
-        lcd_goto LCD_LINE3
+        i2c_lcd_goto LCD_LINE3
         mov     si, lcd_txt_passe_prefix
-        call    lcd_print
+        call    i2c_lcd_print
         mov     ax, 17
         sub     ax, bx          ; ax = numero de passe courant (1..16)
-        call    lcd_tx_dec3
+        call    i2c_lcd_tx_dec3
         mov     si, lcd_txt_passe_suffix
-        call    lcd_print
+        call    i2c_lcd_print
         pop     ax
 
 	mov	cx, 8
@@ -3267,10 +3189,10 @@ int10h_handler:
         call    bios_cursor_ddram                ; AH = adresse DDRAM (DH/DL consommes)
         mov     al, ah
         or      al, 80h                          ; AL = commande "Set DDRAM Address"
-        call    lcd_command                      ; positionne le curseur materiel
+        call    i2c_lcd_command                      ; positionne le curseur materiel
         mov     ax, bp                           ; restaure AL = caractere
 .dev_lcd_loop:
-        call    lcd_data
+        call    i2c_lcd_data
         loop    .dev_lcd_loop
         jmp     .done
 
@@ -3632,13 +3554,6 @@ txt_dump_start_prefix:  db      'Start: 0x', 0
 txt_dump_end_prefix:    db      'End:   0x', 0
 txt_dump_seg_off_sep:   db      ':0x', 0
 
-; ---- texte du LCD I2C (PCF8574 0x27) - pas de padding, pas de
-; ---- largeur fixe imposee comme sur le LCD parallele. Les lignes
-; ---- 1/2/4 de l'ecran de demarrage I2C reutilisent directement
-; ---- lcd_txt_splash_l1/l2/l4 (voir start:) - seule la ligne 3 (les
-; ---- parametres de connexion UART) est specifique a l'I2C ----
-i2c_txt_uart_params:    db      'UART: 9600 8N1', 0
-
 ; ---- textes LCD (20 caracteres, complete automatiquement par des
 ; ---- espaces via "times" - afficheur 4x20) ----
 
@@ -3696,10 +3611,6 @@ lcd_text lcd_txt_run_led_l1, 'Test 8255', 20
 lcd_text lcd_txt_run_led_l2, 'Chenillard Port C', 20
 lcd_text lcd_txt_run_led_l4, 'VE2CUY 2026', 20
 
-; ---- complement de 11 espaces utilise par dump_line, apres les 9
-; ---- caracteres d'adresse "SSSS:OOOO" (9+11=20) ----
-lcd_text lcd_txt_dump_pad, '', 11
-
 ; ---- ligne 3 de l'etape 2 (msg_bloc_progression): etat en toutes
 ; ---- lettres, 20 caracteres ----
 lcd_text lcd_txt_etat_ok, 'Etat: OK', 20
@@ -3714,13 +3625,6 @@ lcd_txt_bloc_mid:       db      '/126 Def:', 0
 ; ---- 7 espaces = 7+3+10 = 20 caracteres ----
 lcd_txt_passe_prefix:   db      'Passe: ', 0
 lcd_text lcd_txt_passe_suffix, '/16', 10
-
-; ---- ligne 4 de l'etape 3 (dump_line): "Ligne: " + dec3 + 10
-; ---- espaces = 7+3+10 = 20 caracteres. Pas de "/total": la plage
-; ---- dumpee est desormais de taille variable (dump_memory_action) -
-; ---- voir sa limitation connue (lcd_tx_dec3, 0-999 lignes) ----
-lcd_txt_ligne_prefix:   db      'Ligne: ', 0
-lcd_text lcd_txt_ligne_suffix, '', 10
 
 ; ---- remplissage jusqu'au vecteur de reset            ----
 ; ---- calcul en fonction de la taille de la ROM (256K) ----
