@@ -2096,6 +2096,27 @@ edit_run_action:
 
         call    lcd_init
 
+        ; --- initialise le DEBUT de la RAM reelle (1000:0000) avec un
+        ; petit programme de test par defaut (B8 34 12 CB = "mov
+        ; ax,1234h" / "retf") - UNIQUEMENT ICI, A L'ENTREE dans cette
+        ; option depuis le menu (demande explicite): PAS a chaque
+        ; retour de RETF (edit_run_execute_and_show revient directement
+        ; a .redraw, qui ne repasse jamais ici) - sinon toute
+        ; modification faite par l'utilisateur avant de tester 'r'
+        ; serait perdue a chaque execution. DS=CS en PERMANENCE (voir
+        ; start:), donc [SI] lit directement la ROM sans changer DS. ---
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, 0
+        mov     si, edit_run_default_code
+        mov     cx, edit_run_default_code_len
+.init_default:
+        mov     al, [si]
+        mov     [es:di], al
+        inc     si
+        inc     di
+        loop    .init_default
+
         ; --- adresse/taille FIXES (0000h/255) - aucune saisie (voir
         ; en-tete) ---
         mov     ax, VAR_SEG
@@ -2108,7 +2129,8 @@ edit_run_action:
         print   txt_run_address, UART
         print   txt_run_help, UART
 
-        call    edit_run_load_buffer            ; copie 1000:0000.. (RAM reelle) -> tampon
+        call    edit_run_load_buffer            ; copie 1000:0000.. (RAM reelle, deja
+                                                  ; initialisee ci-dessus) -> tampon
 
         mov     ax, VAR_SEG
         mov     es, ax
@@ -3535,6 +3557,12 @@ txt_edit_size_invalid:  db      27,'[31m','*** Taille invalide (1-1024 octets, d
 txt_run_address:        db      27,'[36m',"Adresse fixe: 1000:0000 (2e bloc de 64K, 255 octets)",27,'[0m',13,10,0
 txt_run_help:            db     27,'[36m','Fleches G/D: colonne | Fleches H/B: ligne (defilement) | chiffre hexa: editer (2e chiffre valide automatiquement, Entree optionnelle pour 1 seul chiffre) | Q: enregistrer (sans executer) | R: enregistrer et executer (RETF attendu a la fin, reconnue meme pendant la saisie) | Echap: annuler tout',27,'[0m',13,10,13,10,0
 txt_run_result_banner:  db      27,'[34m','=== Execution terminee (1000:0000, RETF) - Registres ===',27,'[0m',13,10,0
+
+; ---- programme de test par defaut copie dans la RAM reelle a
+; 1000:0000 a l'entree dans edit_run_action (B8 34 12 CB = "mov
+; ax,1234h" / "retf") ----
+edit_run_default_code:     db      0B8h, 034h, 012h, 0CBh
+edit_run_default_code_len  equ     $ - edit_run_default_code
 
 ; ---- invites "Dump memory" (voir dump_memory_action) - "End:   0x"
 ; ---- a la meme longueur (9) que "Start: 0x" pour que les chiffres
