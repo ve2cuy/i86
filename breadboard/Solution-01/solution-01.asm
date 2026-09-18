@@ -2600,6 +2600,14 @@ ivt_dump_action:
         push    es
 
         call    i2c_lcd_init
+        gotoxy  1, 0, LCDI2C
+        print   txt_lcd_ivt_loading, LCDI2C     ; "Chargement IVT..." - le LCD
+                                                  ; resterait sinon vide pendant
+                                                  ; le dump UART (40 lignes),
+                                                  ; laissant croire que la carte
+                                                  ; est figee - la grille reelle
+                                                  ; (.redraw) l'efface aussitot
+                                                  ; le dump UART termine
 
         ; --- UART: plage complete (0 a IVT_DUMP_COUNT-1), une seule fois ---
         print   txt_ivt_banniere, UART
@@ -3940,6 +3948,10 @@ lcd_text lcd_txt_menu_dump_l2, '2) Edit RAM', 20
 lcd_text lcd_txt_menu_dump_l3, '3) Registres CPU', 20
 lcd_text lcd_txt_menu_dump_l4, '4) Edit+Run RAM', 20
 lcd_text lcd_txt_menu_dump_l5, '5) IVT', 20
+
+; ---- message affiche pendant le dump UART de ivt_dump_action (avant
+; ---- que la grille LCD reelle ne s'affiche) ----
+lcd_text txt_lcd_ivt_loading, 'Chargement IVT...', 20
 
 ; ---- registres CPU (voir registers_dump_action) - prefixes courts
 ; ---- (LCD 4x20, contrairement aux prefixes UART txt_reg_* qui
