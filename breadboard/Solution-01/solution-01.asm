@@ -818,7 +818,14 @@ dump_memory_action:
         pop     ax
         ret
 
-EDIT_COLS               equ     6               ; octets par ligne de la grille d'edition
+EDIT_COLS               equ     5               ; octets par ligne de la grille d'edition - 5
+                                                  ; (pas 6): laisse exactement la place pour
+                                                  ; l'etiquette d'adresse "SSSS:" (5 caracteres,
+                                                  ; EDIT_ADDR_LABEL_WIDTH) en tete de chaque
+                                                  ; ligne LCD sans depasser les 20 caracteres
+                                                  ; disponibles (5 + 5*3 = 20 exactement) - voir
+                                                  ; edit_ram_draw_grid/cell_ddram.
+EDIT_ADDR_LABEL_WIDTH   equ     5               ; largeur de l'etiquette d'adresse LCD ("SSSS:")
 EDIT_ROWS               equ     4               ; lignes VISIBLES a la fois (4 lignes du LCD)
 EDIT_MAX_SIZE           equ     0400h           ; taille maximale d'une plage editable (1024)
 EDIT_MIN_START          equ     0400h           ; adresse de depart minimale (juste apres
@@ -858,8 +865,8 @@ EDIT_RUN_SIZE           equ     0FFh            ; taille FIXE (255 octets) de la
 ;   Q/q   - VALIDE: le tampon (taille octets) est recopie dans la RAM
 ;           reelle (voir edit_ram_commit_buffer), puis retour au menu.
 ;
-; La grille affiche EDIT_ROWS x EDIT_COLS (4x6 = 24) octets a la fois,
-; mais la plage peut en contenir jusqu'a 1024 (soit jusqu'a 171 lignes
+; La grille affiche EDIT_ROWS x EDIT_COLS (4x5 = 20) octets a la fois,
+; mais la plage peut en contenir jusqu'a 1024 (soit jusqu'a 205 lignes
 ; logiques): les fleches HAUT/BAS FONT DEFILER la fenetre visible d'une
 ; ligne des que le curseur en sortirait (voir edit_ram_move_up/down et
 ; edit_ram_scroll_to_cursor) - contrairement au premier jalon, limite
@@ -1213,9 +1220,9 @@ edit_ram_draw_grid:
         mov     bp, EDIT_WINDOW_ROW_OFF
         mov     ax, [bp]                ; AX = ligne logique du haut de la fenetre
         add     ax, si                  ; AX = ligne logique de CETTE ligne visible
-        mov     dx, 6
-        mul     dx                      ; AX = ligne logique * 6 (tient dans AX,
-                                          ; max 170*6=1020)
+        mov     dx, EDIT_COLS
+        mul     dx                      ; AX = ligne logique * EDIT_COLS (tient dans
+                                          ; AX, max 204*5=1020)
         mov     di, ax                  ; DI = decalage (octets) du 1er octet de
                                           ; cette ligne dans la plage/le tampon
 
@@ -1242,40 +1249,50 @@ edit_ram_draw_grid:
 .row_not2:
         lcd_goto LCD_LINE4
 .row_go:
-        ; --- adresse REELLE de cette ligne (EDIT_BASE_OFF + DI) - UART
-        ; SEULEMENT. PAS sur le LCD: "SSSS: " (6) + 6 cases "XX " (18)
-        ; = 24 caracteres deborderait la ligne de 20 caracteres du LCD
-        ; de 4 - un debordement qui, sur cet afficheur 4x20 "type A",
-        ; se retrouve dans la ligne PAIREE (LCD_LINE1<->LCD_LINE3,
-        ; LCD_LINE2<->LCD_LINE4 partagent le meme bloc de 40 octets de
-        ; DDRAM) et corromprait le DEBUT de cette ligne pairee une
-        ; fois qu'elle est dessinee a son tour (bug trouve sur le
-        ; materiel reel: le premier caractere de l'adresse des lignes
-        ; 1 et 2 disparaissait - voir Directives.md). Le LCD garde donc
-        ; le format compact d'origine (6 cases "XX " = 18 caracteres,
-        ; sans etiquette d'adresse par ligne). ---
+        ; --- adresse REELLE de cette ligne (EDIT_BASE_OFF + DI), sur le
+        ; LCD ET l'UART. Sur le LCD: "SSSS:" (EDIT_ADDR_LABEL_WIDTH = 5
+        ; caracteres, SANS espace apres les deux-points - contrairement
+        ; a l'UART qui, lui, n'est pas contraint en largeur) + EDIT_COLS
+        ; (5) cases "XX " (15 caracteres) = EXACTEMENT 20 caracteres,
+        ; la largeur du LCD - AUCUN debordement. EDIT_COLS a ete reduit
+        ; de 6 a 5 PRECISEMENT pour degager cette place: avec 6 cases
+        ; (18 caracteres), ajouter la moindre etiquette d'adresse
+        ; depasserait 20 et deborderait dans la ligne PAIREE (LCD_LINE1
+        ; <->LCD_LINE3, LCD_LINE2<->LCD_LINE4 partagent le meme bloc de
+        ; 40 octets de DDRAM) - bug deja trouve et corrige sur le
+        ; materiel reel avec l'ancien format 6 cases + etiquette (voir
+        ; Directives.md); NE PAS reaugmenter EDIT_COLS sans retirer
+        ; l'etiquette, ou l'inverse. AX necessaire deux fois (LCD PUIS
+        ; UART, chacun le detruit - voir leurs contrats) - preserve via
+        ; push/pop plutot que de relire EDIT_BASE_OFF+DI deux fois. ---
         mov     bp, EDIT_BASE_OFF
         mov     ax, [bp]
         add     ax, di                  ; AX = adresse reelle de cette ligne
+        push    ax
+        call    lcd_tx_hex_word
+        mov     al, ':'
+        call    lcd_data
+        pop     ax
         call    uart_tx_hex_word
         mov     al, ':'
         call    uart_tx_byte
         mov     al, ' '
         call    uart_tx_byte
 
-        ; --- nombre de colonnes valides pour cette ligne (6, sauf la
-        ; derniere ligne logique si la taille n'est pas multiple de 6) ---
+        ; --- nombre de colonnes valides pour cette ligne (EDIT_COLS,
+        ; sauf la derniere ligne logique si la taille n'est pas
+        ; multiple de EDIT_COLS) ---
         mov     ax, cx
         sub     ax, di                  ; AX = octets restants a partir d'ici
         cmp     ax, EDIT_COLS
         jbe     .cols_ok
         mov     ax, EDIT_COLS
 .cols_ok:
-        mov     bl, al                  ; BL = nombre de colonnes valides (1-6)
+        mov     bl, al                  ; BL = nombre de colonnes valides (1-5)
 
         mov     bp, EDIT_BUFFER_OFF
         add     bp, di                  ; BP = pointeur tampon, debut de cette ligne
-        xor     dh, dh                  ; DH = colonne courante (0-5)
+        xor     dh, dh                  ; DH = colonne courante (0-4)
 .col_loop:
         cmp     dh, bl
         jae     .col_pad
@@ -1333,9 +1350,10 @@ edit_ram_draw_grid:
 ; Calcule l'adresse DDRAM (SANS le bit de commande) de la case
 ; COURANTE (EDIT_CURSOR_OFF, ramenee a sa position VISIBLE via
 ; EDIT_WINDOW_ROW_OFF) - "XX " = 3 caracteres par cellule sur le LCD,
-; SANS etiquette d'adresse (voir edit_ram_draw_grid: l'adresse par
-; ligne n'est affichee que sur l'UART, pas sur le LCD - deborderait la
-; largeur de 20 caracteres, voir son en-tete).
+; DECALEE de EDIT_ADDR_LABEL_WIDTH (5) pour laisser la place a
+; l'etiquette d'adresse "SSSS:" en tete de chaque ligne (voir
+; edit_ram_draw_grid - EDIT_COLS a ete reduit a 5 precisement pour
+; que ce total (5 + 5*3 = 20) ne deborde jamais la largeur du LCD).
 ; Sortie: AH = adresse DDRAM (0-127).
 ; ============================================================
 edit_ram_cell_ddram:
@@ -1346,9 +1364,9 @@ edit_ram_cell_ddram:
 
         mov     bp, EDIT_CURSOR_OFF
         mov     ax, [bp]                ; AX = position lineaire du curseur
-        mov     cx, 6
+        mov     cx, EDIT_COLS
         xor     dx, dx
-        div     cx                      ; AX = ligne logique, DX = colonne (0-5)
+        div     cx                      ; AX = ligne logique, DX = colonne (0-4)
         mov     bl, dl                  ; BL = colonne
 
         mov     bp, EDIT_WINDOW_ROW_OFF
@@ -1358,7 +1376,7 @@ edit_ram_cell_ddram:
         mov     al, bl
         mov     cl, 3
         mul     cl                      ; AX = colonne*3
-        mov     cl, al                  ; CL = decalage colonne (0,3,...,15)
+        mov     cl, al                  ; CL = decalage colonne DANS LA GRILLE (0,3,...,12)
 
         cmp     bh, 0
         je      .r0
@@ -1374,6 +1392,9 @@ edit_ram_cell_ddram:
         jmp     .go
 .r2:    mov     al, LCD_LINE3 & 07Fh
 .go:
+        add     al, EDIT_ADDR_LABEL_WIDTH ; decale par l'etiquette d'adresse ("SSSS:",
+                                          ; 5 caracteres) en tete de chaque ligne LCD -
+                                          ; voir edit_ram_draw_grid
         add     al, cl
         mov     ah, al                  ; AH = adresse DDRAM (sortie)
 
@@ -1523,7 +1544,7 @@ edit_ram_move_right:
 ; fixes aux bords de la plage (premiere/derniere ligne). Font defiler
 ; la fenetre visible au besoin (edit_ram_scroll_to_cursor) - c'est ce
 ; qui permet a la grille de couvrir toute la plage (jusqu'a 1024
-; octets = 171 lignes), pas seulement les 4 premieres lignes visibles.
+; octets = 205 lignes), pas seulement les 4 premieres lignes visibles.
 ; ============================================================
 edit_ram_move_up:
         push    ax
@@ -2139,9 +2160,14 @@ edit_run_action:
         call    edit_ram_cell_ddram      ; AH = adresse DDRAM de la case courante
         mov     al, dl                   ; restaure AL = touche (AH inchange)
         call    edit_run_byte_value      ; AL(entree)=touche deja lue; DL/CF = sortie (voir en-tete plus bas)
+        jc      .redraw                  ; Entree sans saisie (DL=0 dans ce cas) - rien a ecrire.
+                                          ; VERIFIE AVANT "cmp dl,1": ce dernier ECRASERAIT le CF
+                                          ; de sortie d'edit_run_byte_value (0-1 = emprunt = CF=1
+                                          ; meme quand DL=0 signifiait "valeur prete", CF=0) - bug
+                                          ; trouve sur le materiel reel (2e chiffre "avale" une
+                                          ; case qui restait a 00), corrige en testant jc EN PREMIER.
         cmp     dl, 1
         je      .commit_and_run          ; 'r'/'R' tapee PENDANT la saisie - execute immediatement
-        jc      .redraw                  ; Entree sans saisie - rien a ecrire
         mov     dl, bl                   ; DL = valeur a ecrire (survit a l'appel)
         call    edit_ram_write_current   ; ecrit DANS LE TAMPON
         call    edit_ram_advance         ; passe a la case suivante (ordre de lecture)

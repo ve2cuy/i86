@@ -649,31 +649,37 @@ ne modifie que ce tampon :
   RAM réelle n'est pas touchée.
 - **`Q`/`q`** — **valide** : le tampon est recopié dans la RAM réelle.
 
-La grille affiche 6 colonnes × 4 lignes **visibles** à la fois, mais la
-plage peut en contenir jusqu'à 1024 octets (171 lignes logiques) : les
+La grille affiche 5 colonnes × 4 lignes **visibles** à la fois, mais la
+plage peut en contenir jusqu'à 1024 octets (205 lignes logiques) : les
 flèches **haut/bas font défiler** la fenêtre visible d'une ligne dès
 que le curseur en sortirait — contrairement au premier jalon, limité à
 la grille initialement affichée.
 
-Sortie UART (avec l'adresse réelle de chaque ligne — absente du LCD,
-voir plus bas) :
+Sortie UART (avec l'adresse réelle de chaque ligne) :
 
 ```
-0400: 00 01 02 03 04 05
-0406: 06 07 08 09 0A 0B
-040C: 0C 0D 0E 0F 10 11
-0412: 12 13 14 15 16 17
+0400: 00 01 02 03 04
+0405: 05 06 07 08 09
+040A: 0A 0B 0C 0D 0E
+040F: 0F 10 11 12 13
 ```
 
-Sur le LCD, chaque ligne n'affiche QUE la grille compacte (`XX XX XX
-XX XX XX` = 18 caractères) — **sans** l'adresse par ligne : l'ajouter
-ferait déborder les 20 caractères de la ligne de 4, et ce débordement,
-sur cet afficheur 4×20 « type A » (`LCD_LINE1`↔`LCD_LINE3` et
+Le LCD affiche la **même étiquette d'adresse** en tête de chaque ligne
+(`SSSS:`, 5 caractères, sans espace après les deux-points), suivie de
+la grille compacte (5 cases `XX ` = 15 caractères) : **exactement 20
+caractères**, la largeur de l'afficheur — utile pour se repérer en
+défilant, sans jamais perdre de vue à quelle adresse réelle on édite.
+
+⚠️ **La grille est volontairement à 5 colonnes, pas 6** : avec 6
+colonnes (18 caractères), ajouter la moindre étiquette d'adresse
+dépasserait les 20 caractères disponibles, et ce débordement, sur cet
+afficheur 4×20 « type A » (`LCD_LINE1`↔`LCD_LINE3` et
 `LCD_LINE2`↔`LCD_LINE4` partagent chacun un même bloc de 40 octets de
 DDRAM), corromprait le début de la ligne appairée dessinée juste après
-— bug trouvé sur le matériel réel (le premier caractère de l'adresse
-des lignes 1 et 2 disparaissait) et corrigé en retirant l'étiquette
-d'adresse du LCD (gardée sur l'UART, où la largeur n'est pas limitée).
+— bug déjà trouvé sur le matériel réel avec l'ancien format 6 colonnes
++ étiquette (le premier caractère de l'adresse des lignes 1 et 2
+disparaissait). Ne jamais réaugmenter `EDIT_COLS` sans retirer
+l'étiquette, ou l'inverse.
 
 | Touche | Effet |
 |---|---|
