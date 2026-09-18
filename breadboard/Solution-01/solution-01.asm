@@ -825,6 +825,10 @@ EDIT_MIN_START          equ     0400h           ; adresse de depart minimale (ju
                                                   ; l'IVT, 256*4=1024 octets - voir
                                                   ; "Interruptions logicielles type BIOS",
                                                   ; README.md)
+EDIT_RUN_SIZE           equ     0FFh            ; taille FIXE (255 octets) de la plage
+                                                  ; editable/executable a 1000:0000 (voir
+                                                  ; edit_run_action) - pas de saisie, valeur
+                                                  ; imposee (demande explicite)
 
 ; ============================================================
 ; edit_ram_action
@@ -2026,22 +2030,21 @@ registers_dump_action:
 ; d'EXECUTER le code qui y a ete saisi via la touche 'r'/'R'.
 ;
 ; Reutilise TOUT l'appareil de edit_ram_action (grille, defilement,
-; tampon, saisie hexa - edit_ram_draw_grid/cell_ddram/place_cursor/
-; write_current/scroll_to_cursor/move_left/right/up/down/advance sont
-; agnostiques du segment: ils ne touchent jamais a la "vraie" RAM,
-; seulement au tampon EDIT_BUFFER_OFF - voir leurs en-tetes), sauf
-; pour charger/valider le tampon vers la vraie RAM, qui utilise
-; edit_run_load_buffer/commit_buffer (segment 1000h) au lieu de
-; edit_ram_load_buffer/commit_buffer (segment 0000h).
+; tampon - edit_ram_draw_grid/cell_ddram/place_cursor/write_current/
+; scroll_to_cursor/move_left/right/up/down/advance sont agnostiques du
+; segment: ils ne touchent jamais a la "vraie" RAM, seulement au
+; tampon EDIT_BUFFER_OFF - voir leurs en-tetes), sauf pour charger/
+; valider le tampon vers la vraie RAM (edit_run_load_buffer/
+; commit_buffer, segment 1000h) et pour la composition d'un octet
+; (edit_run_byte_value au lieu de ps2_edit_byte_value - voir plus bas,
+; necessaire pour reconnaitre 'r'/'R' PENDANT la saisie).
 ;
-; PAS de saisie d'adresse (contrairement a edit_ram_action): l'adresse
-; de depart est TOUJOURS 0000h (donc 1000:0000), fixee ici directement
-; dans EDIT_BASE_OFF. Seule la TAILLE est demandee (1-1024 octets,
-; memes limites que edit_ram_action via EDIT_MAX_SIZE) - largement
-; sous la zone reservee (PORTA_SHADOW_OFF et suivantes, EDIT_BUFFER_OFF
-; lui-meme, 0F800h-0FFFFh) et sous la pile active (SS=1000h, SP
-; demarre a 0000h/sommet - voir start:), donc sans risque de
-; chevauchement.
+; AUCUNE SAISIE (demande explicite - accelere les tests): l'adresse de
+; depart est TOUJOURS 0000h (donc 1000:0000) et la TAILLE est TOUJOURS
+; EDIT_RUN_SIZE (255 octets, largement sous la zone reservee
+; 0F800h-0FFFFh et sous la pile active SS=1000h) - toutes deux fixees
+; directement dans EDIT_BASE_OFF/EDIT_SIZE_OFF, sans aucun prompt: la
+; grille s'affiche immediatement.
 ;
 ; Touches (identiques a edit_ram_action, PLUS 'r'/'R'):
 ;   Echap - ANNULE toute l'edition (tampon abandonne), retour au menu.
@@ -2049,8 +2052,16 @@ registers_dump_action:
 ;           retour au menu.
 ;   R/r   - VALIDE (comme Q/q), PUIS EXECUTE le code a 1000:0000 (voir
 ;           edit_run_execute_and_show) et affiche les registres sur
-;           l'UART, puis retour au menu.
-;   (fleches, chiffres hexa, Entree: voir edit_ram_action)
+;           l'UART, puis retour au menu. RECONNUE A TOUT MOMENT, meme
+;           AU MILIEU de la composition d'un octet (voir
+;           edit_run_byte_value) - dans ce cas, le chiffre partiel non
+;           encore valide est ABANDONNE (rien n'est ecrit pour cette
+;           case).
+;   Chiffre hexa - comme edit_ram_action, SAUF qu'Entree n'est PLUS
+;           NECESSAIRE pour valider un octet COMPLET: le 2e chiffre
+;           hexa valide et avance AUTOMATIQUEMENT (Entree reste
+;           disponible pour valider un octet d'UN SEUL chiffre).
+;   (fleches: voir edit_ram_action)
 ; ============================================================
 edit_run_action:
         push    ax
@@ -2063,47 +2074,16 @@ edit_run_action:
 
         call    lcd_init
 
-        ; --- adresse fixe 1000:0000 - pas de saisie, juste memorisee
-        ; dans EDIT_BASE_OFF pour edit_run_load_buffer/commit_buffer
-        ; et edit_ram_draw_grid (etiquette d'adresse UART) ---
+        ; --- adresse/taille FIXES (0000h/255) - aucune saisie (voir
+        ; en-tete) ---
         mov     ax, VAR_SEG
         mov     es, ax
         mov     di, EDIT_BASE_OFF
         mov     word [es:di], 0
+        mov     di, EDIT_SIZE_OFF
+        mov     word [es:di], EDIT_RUN_SIZE
 
         print   txt_run_address, UART
-        gotoxy  0, 0, LCD
-        print   lcd_txt_run_addr, LCD
-
-        ; --- taille de la plage (en octets) - meme saisie que
-        ; edit_ram_action ---
-        mov     si, txt_edit_size_prefix
-        call    uart_tx_string
-        mov     si, txt_edit_size_prefix
-        lcd_show LCD_LINE2
-        mov     cl, 4
-        mov     ah, (LCD_LINE2 & 07Fh) + 11     ; 11 = longueur de "Size:    0x"
-        call    ps2_read_hex_editable           ; BX = taille saisie
-
-        mov     al, 13
-        call    uart_tx_byte
-        mov     al, 10
-        call    uart_tx_byte
-
-        cmp     bx, 0
-        je      .size_reject
-        cmp     bx, EDIT_MAX_SIZE
-        ja      .size_reject
-        jmp     .size_ok
-.size_reject:
-        print   txt_edit_size_invalid, UART
-        jmp     .done
-.size_ok:
-        mov     ax, VAR_SEG
-        mov     es, ax
-        mov     di, EDIT_SIZE_OFF
-        mov     [es:di], bx
-
         print   txt_run_help, UART
 
         call    edit_run_load_buffer            ; copie 1000:0000.. (RAM reelle) -> tampon
@@ -2158,7 +2138,9 @@ edit_run_action:
                                           ; edit_ram_cell_ddram detruit AX)
         call    edit_ram_cell_ddram      ; AH = adresse DDRAM de la case courante
         mov     al, dl                   ; restaure AL = touche (AH inchange)
-        call    ps2_edit_byte_value      ; AL(entree)=touche deja lue, CF=1 si rien tape
+        call    edit_run_byte_value      ; AL(entree)=touche deja lue; DL/CF = sortie (voir en-tete plus bas)
+        cmp     dl, 1
+        je      .commit_and_run          ; 'r'/'R' tapee PENDANT la saisie - execute immediatement
         jc      .redraw                  ; Entree sans saisie - rien a ecrire
         mov     dl, bl                   ; DL = valeur a ecrire (survit a l'appel)
         call    edit_ram_write_current   ; ecrit DANS LE TAMPON
@@ -2181,6 +2163,115 @@ edit_run_action:
         pop     cx
         pop     bx
         pop     ax
+        ret
+
+; ============================================================
+; edit_run_byte_value
+; Variante de ps2_edit_byte_value (lib/ps2.asm, INCHANGEE - reste
+; utilisee par edit_ram_action) POUR edit_run_action uniquement: cette
+; derniere BOUCLE INTERNEMENT sur ps2_get_char jusqu'a Entree (touche
+; par touche, jamais rendue a l'appelant avant), ce qui AVALERAIT
+; SILENCIEUSEMENT 'r'/'R' s'il etait tape APRES un premier chiffre (la
+; boucle .wait_key exterieure d'edit_run_action, qui le reconnait,
+; elle, ne serait jamais re-atteinte). Cette variante ajoute donc:
+;   1) 'r'/'R' reconnue A CHAQUE touche lue (avant meme le premier
+;      chiffre) - retour immediat, chiffre(s) partiel(s) ABANDONNES.
+;   2) Validation AUTOMATIQUE apres le 2e chiffre hexa - Entree n'est
+;      plus NECESSAIRE pour un octet complet (elle reste disponible
+;      pour valider un octet d'UN SEUL chiffre, comme avant).
+;
+; Entree: AL = premier caractere deja lu par l'appelant (edit_ram_cell_
+;         ddram y a ete appele juste avant - AH = adresse DDRAM de la
+;         cellule, inchange par cette routine).
+; Sortie: BX = valeur composee (uniquement si DL=0 et CF=0).
+;         DL=0, CF=0: au moins un chiffre tape - valeur (BX) a ecrire.
+;         DL=0, CF=1: Entree pressee sans aucune saisie - rien a
+;                      ecrire (comme ps2_edit_byte_value).
+;         DL=1: 'r'/'R' pressee (a tout moment) - BX indefini, rien a
+;               ecrire, l'appelant doit executer immediatement (voir
+;               edit_run_action, .commit_and_run).
+; Detruit: AX, CX, DX (BX/DL = sortie). Jamais SI/DI/ES/BP.
+; ============================================================
+edit_run_byte_value:
+        push    si              ; SI = accumulateur interne (voir
+                                 ; ps2_edit_byte_value - meme raison)
+        xor     si, si
+        xor     dh, dh          ; DH = nombre de chiffres saisis (0-2)
+        jmp     .have_key       ; traite d'abord le caractere deja lu
+
+.next_key:
+        call    ps2_get_char
+.have_key:
+        cmp     al, 'r'         ; 'r'/'R': interrompt A TOUT MOMENT (voir
+        je      .interrupt_run  ; en-tete) - verifie AVANT toute autre
+        cmp     al, 'R'         ; interpretation du caractere
+        je      .interrupt_run
+
+        cmp     al, 13          ; Entree ?
+        je      .commit
+        cmp     al, 8           ; retour arriere ?
+        je      .backspace
+        call    ps2_hex_digit_value
+        jc      .next_key       ; touche non geree - ignore
+        cmp     dh, 2
+        jae     .next_key       ; deja 2 chiffres - ignore
+        mov     dl, al
+        mov     cl, 4
+        shl     si, cl
+        push    dx              ; DH(compteur)/DL(valeur) sauvegardes ensemble
+        mov     dh, 0
+        add     si, dx
+        pop     dx
+        mov     al, dl
+        call    uart_tx_hex_nibble
+        mov     al, dl
+        call    lcd_tx_hex_nibble
+        inc     dh
+        cmp     dh, 2
+        jb      .next_key
+        jmp     .commit          ; 2e chiffre: valide AUTOMATIQUEMENT (voir en-tete)
+
+.backspace:
+        cmp     dh, 0
+        je      .next_key
+        dec     dh
+        mov     cl, 4
+        shr     si, cl
+        mov     al, 8
+        call    uart_tx_byte
+        mov     al, ' '
+        call    uart_tx_byte
+        mov     al, 8
+        call    uart_tx_byte
+        mov     al, ah
+        add     al, dh
+        or      al, 80h
+        call    lcd_command
+        mov     al, ' '
+        call    lcd_data
+        mov     al, ah
+        add     al, dh
+        or      al, 80h
+        call    lcd_command
+        jmp     .next_key
+
+.commit:
+        cmp     dh, 0
+        je      .empty
+        mov     bx, si          ; BX = valeur finale (sortie documentee)
+        mov     dl, 0
+        pop     si
+        clc
+        ret
+.empty:
+        mov     dl, 0
+        pop     si
+        stc
+        ret
+.interrupt_run:
+        mov     dl, 1
+        pop     si
+        clc
         ret
 
 ; ============================================================
@@ -3412,8 +3503,8 @@ txt_edit_ivt_reject:    db      27,'[31m',"*** Adresse dans l'IVT (< 0x0400) - e
 txt_edit_size_invalid:  db      27,'[31m','*** Taille invalide (1-1024 octets, dans les limites du segment) - edition annulee ***',27,'[0m',13,10,13,10,0
 
 ; ---- invites "Edit+Run RAM" (voir edit_run_action) ----
-txt_run_address:        db      27,'[36m',"Adresse fixe: 1000:0000 (2e bloc de 64K)",27,'[0m',13,10,0
-txt_run_help:            db     27,'[36m','Fleches G/D: colonne | Fleches H/B: ligne (defilement) | chiffre hexa: editer | Entree: valider la case | Q: enregistrer (sans executer) | R: enregistrer et executer (RETF attendu a la fin) | Echap: annuler tout',27,'[0m',13,10,13,10,0
+txt_run_address:        db      27,'[36m',"Adresse fixe: 1000:0000 (2e bloc de 64K, 255 octets)",27,'[0m',13,10,0
+txt_run_help:            db     27,'[36m','Fleches G/D: colonne | Fleches H/B: ligne (defilement) | chiffre hexa: editer (2e chiffre valide automatiquement, Entree optionnelle pour 1 seul chiffre) | Q: enregistrer (sans executer) | R: enregistrer et executer (RETF attendu a la fin, reconnue meme pendant la saisie) | Echap: annuler tout',27,'[0m',13,10,13,10,0
 txt_run_result_banner:  db      27,'[34m','=== Execution terminee (1000:0000, RETF) - Registres ===',27,'[0m',13,10,0
 
 ; ---- invites "Dump memory" (voir dump_memory_action) - "End:   0x"
@@ -3456,9 +3547,6 @@ lcd_text lcd_txt_menu_dump_l1, '1) Dump memory', 20
 lcd_text lcd_txt_menu_dump_l2, '2) Edit RAM', 20
 lcd_text lcd_txt_menu_dump_l3, '3) Registres CPU', 20
 lcd_text lcd_txt_menu_dump_l4, '4) Edit+Run RAM', 20
-
-; ---- invite "Edit+Run RAM" (voir edit_run_action) ----
-lcd_text lcd_txt_run_addr, 'Run: 1000:0000', 20
 
 ; ---- registres CPU (voir registers_dump_action) - prefixes courts
 ; ---- (LCD 4x20, contrairement aux prefixes UART txt_reg_* qui

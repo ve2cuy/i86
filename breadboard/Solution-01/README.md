@@ -736,20 +736,17 @@ chacun sur la ligne 4, **majuscule si actif, minuscule sinon** —
 éditeur par plage/tampon qu'`Edit RAM` ci-dessus, mais à une **adresse
 fixe**, `1000:0000` (le **deuxième bloc de 64 Ko** de RAM — par
 opposition au segment `0000h` d'`Edit RAM`), et avec en plus la
-possibilité d'**exécuter** le code qui vient d'y être saisi. Aucune
-saisie d'adresse (fixée à `0000h` dans ce segment) — seule la taille
-est demandée (`1`-`0x0400` octets, mêmes limites qu'`Edit RAM`) :
-
-```
-Run: 1000:0000
-Size:    0x0010
-```
+possibilité d'**exécuter** le code qui vient d'y être saisi. **Aucune
+saisie** (accélère les tests) : l'adresse (`0000h` dans ce segment) et
+la taille (**toujours 255 octets**, `EDIT_RUN_SIZE`) sont fixes — la
+grille s'affiche immédiatement, sans prompt.
 
 | Touche | Effet |
 |---|---|
-| (flèches, chiffre hexa, Entrée) | Identiques à `Edit RAM` |
+| Flèches gauche/droite/haut/bas | Identiques à `Edit RAM` |
+| Chiffre hexa (`0-9`/`A-F`) | Compose une nouvelle valeur — le **2e chiffre valide et avance automatiquement** (Entrée n'est **plus nécessaire** pour un octet complet ; elle reste disponible pour valider un octet d'un seul chiffre) |
 | `Q` / `q` | **Enregistre** le tampon dans la RAM réelle (`1000:0000`), **sans exécuter**, retour au menu |
-| `R` / `r` | **Enregistre** (comme `Q`/`q`), **PUIS EXÉCUTE** le code à `1000:0000` (voir ci-dessous), affiche les registres résultants sur l'UART, retour au menu |
+| `R` / `r` | **Enregistre** (comme `Q`/`q`), **PUIS EXÉCUTE** le code à `1000:0000` (voir ci-dessous), affiche les registres résultants sur l'UART, retour au menu — **reconnue à tout moment, même au milieu de la saisie d'un octet** (le chiffre partiel non encore validé est alors abandonné, rien n'est écrit pour cette case) |
 | Échap | **Annule** — la RAM réelle n'est pas modifiée, retour au menu |
 
 L'exécution se fait par un **`CALL FAR` immédiat** vers `1000:0000`
@@ -778,6 +775,28 @@ FLAGS=0246  0000001001000110  NV UP EI PL NZ NA PO NC
 registres qui suit (qui utilise `push`/`pop` pour lire la pile)
 ciblerait une pile invalide — risque inhérent à l'exécution de code
 arbitraire, comme la commande `G` de DEBUG.COM.
+
+**Exemple de test minimal** à saisir à `1000:0000` (2 octets) :
+
+```
+B8 34 12    ; mov ax, 1234h
+CB          ; retf
+```
+
+Après `R`/`r`, le dump UART affiche `AX=1234` (hexa+binaire). Les 6
+registres généraux (`AX`/`BX`/`CX`/`DX`/`SI`/`DI`) sont **sans risque**
+à utiliser pour ce genre de test : capturés et affichés tels quels,
+sans qu'aucune autre partie du firmware dépende de leur valeur pour
+continuer à fonctionner après le retour. À **éviter** en revanche sans
+les restaurer explicitement avant `RETF` :
+- **`DS`** — le firmware suppose `DS = CS` en permanence (c'est ainsi
+  qu'il retrouve ses propres chaînes de texte en ROM) ; le changer sans
+  le restaurer ferait planter ou afficher n'importe quoi l'affichage
+  des registres lui-même.
+- **`SS`** — voir l'avertissement ci-dessus.
+- **`SP`/`BP`** — capturés et affichés correctement, mais à modifier
+  franchement (ex. `mov sp, ...`) seulement si ce cas précis est
+  volontairement celui testé.
 
 | Option | Action | Détail |
 |---|---|---|
