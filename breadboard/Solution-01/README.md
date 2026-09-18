@@ -752,7 +752,7 @@ grille s'affiche immédiatement, sans prompt.
 | Flèches gauche/droite/haut/bas | Identiques à `Edit RAM` |
 | Chiffre hexa (`0-9`/`A-F`) | Compose une nouvelle valeur — le **2e chiffre valide et avance automatiquement** (Entrée n'est **plus nécessaire** pour un octet complet ; elle reste disponible pour valider un octet d'un seul chiffre) |
 | `Q` / `q` | **Enregistre** le tampon dans la RAM réelle (`1000:0000`), **sans exécuter**, retour au menu |
-| `R` / `r` | **Enregistre** (comme `Q`/`q`), **PUIS EXÉCUTE** le code à `1000:0000` (voir ci-dessous), affiche les registres résultants sur l'UART, retour au menu — **reconnue à tout moment, même au milieu de la saisie d'un octet** (le chiffre partiel non encore validé est alors abandonné, rien n'est écrit pour cette case) |
+| `R` / `r` | **Enregistre** (comme `Q`/`q`), **PUIS EXÉCUTE** le code à `1000:0000` (voir ci-dessous), affiche les registres résultants sur l'UART, **puis revient à la fenêtre d'édition** (pas au menu — permet de relancer `R` sans ressaisir le code) — **reconnue à tout moment, même au milieu de la saisie d'un octet** (le chiffre partiel non encore validé est alors abandonné, rien n'est écrit pour cette case) |
 | Échap | **Annule** — la RAM réelle n'est pas modifiée, retour au menu |
 
 L'exécution se fait par un **`CALL FAR` immédiat** vers `1000:0000`
