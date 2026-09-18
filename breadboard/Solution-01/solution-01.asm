@@ -2566,8 +2566,9 @@ edit_run_execute_and_show:
 ;   UART: TOUTE la plage (40 vecteurs) d'un coup ("INT xxh ->
 ;         SSSS:OOOO : nom -> description"), une seule fois a l'entree
 ;         - les vecteurs IMPLEMENTES (int10h_handler/int16h_handler/
-;         irq0_test_handler) en VERT, les autres (en pratique
-;         toujours int_not_implemented) sans couleur.
+;         irq0_test_handler/irq1_test_handler/irq4_test_handler) en
+;         VERT, les autres (en pratique toujours int_not_implemented)
+;         sans couleur.
 ;   LCD I2C: grille DEFILANTE (40 vecteurs, 4 visibles a la fois),
 ;         "xxh  SSSS:OOOO" par ligne (14 caracteres, bien sous les 20
 ;         disponibles - pas de couleur possible sur le LCD) - fleches
@@ -2578,9 +2579,10 @@ edit_run_execute_and_show:
 ;         seule, rien a saisir).
 ;
 ; Identification "implemente/pas implemente": compare l'OFFSET lu
-; dans chaque entree de l'IVT aux adresses des 3 gestionnaires reels
-; connus (int10h_handler/int16h_handler/irq0_test_handler) - le
-; SEGMENT n'est PAS verifie separement (tous les gestionnaires, meme
+; dans chaque entree de l'IVT aux adresses des 5 gestionnaires reels
+; connus (int10h_handler/int16h_handler/irq0_test_handler/
+; irq1_test_handler/irq4_test_handler) - le SEGMENT n'est PAS verifie
+; separement (tous les gestionnaires, meme
 ; les futurs, vivent dans la meme ROM = CS ecrit par
 ; setup_bios_interrupts/init_8259/init_ivt_not_implemented - jamais
 ; une autre valeur). Toute autre offset (en pratique, toujours celle
@@ -2648,6 +2650,16 @@ ivt_dump_action:
         print   txt_ivt_irq0, UART
         jmp     .u_line_done
 .u_not_irq0:
+        cmp     dx, irq1_test_handler
+        jne     .u_not_irq1
+        print   txt_ivt_irq1, UART
+        jmp     .u_line_done
+.u_not_irq1:
+        cmp     dx, irq4_test_handler
+        jne     .u_not_irq4
+        print   txt_ivt_irq4, UART
+        jmp     .u_line_done
+.u_not_irq4:
         print   txt_ivt_not_impl, UART
 .u_line_done:
         print   txt_crlf, UART
@@ -3320,23 +3332,31 @@ setup_bios_interrupts:
 ;     final sont fournis automatiquement par le 8259 selon la ligne
 ;     IRQ qui a interrompu, PAS calcules ici).
 ;
-; Seule IR0 (bouton-poussoir de test, cablee) est DEMASQUEE (OCW1) -
-; IR1-IR7 restent masquees: non cablees pour l'instant (reservees a
-; l'UART/clavier via Arduino, voir Directives.md), potentiellement
-; flottantes et donc bruyantes si demasquees prematurement.
+; IR0 (bouton-poussoir de test), IR1 (clavier via Arduino, convention
+; PC/XT) et IR4 (UART via Arduino, convention PC/XT/COM1) sont
+; DEMASQUEES (OCW1) - IR2/IR3/IR5/IR6/IR7 restent masquees: non
+; cablees pour l'instant, potentiellement flottantes et donc bruyantes
+; si demasquees prematurement. IR1/IR4 servent pour l'instant a un
+; simple TEST DE BRANCHEMENT Arduino->8259 (voir irq1_test_handler/
+; irq4_test_handler - meme demarche que irq0_test_handler, AVANT
+; d'implementer le vrai protocole de donnees, qui utilisera un port
+; 8255 dedie - voir Directives.md): IR1/IR4 sont donc pour l'instant
+; pulsees par l'Arduino lui-meme (boutons cables a l'Arduino, pas
+; directement au 8259), pas encore par un evenement UART/clavier reel.
 ;
-; Installe aussi irq0_test_handler au vecteur INT 08h (IVT, segment
-; 0000h) - meme motif que setup_bios_interrupts ci-dessus pour INT
-; 10h/16h. N'active PAS les interruptions (IF) elle-meme - voir
-; start:, qui le fait explicitement APRES le retour de cette routine,
-; une fois le 8259 configure ET le vecteur installe.
+; Installe aussi irq0_test_handler/irq1_test_handler/irq4_test_handler
+; aux vecteurs INT 08h/09h/0Ch (IVT, segment 0000h) - meme motif que
+; setup_bios_interrupts ci-dessus pour INT 10h/16h. N'active PAS les
+; interruptions (IF) elle-meme - voir start:, qui le fait explicitement
+; APRES le retour de cette routine, une fois le 8259 configure ET les
+; vecteurs installes.
 ; ============================================================
 ICW1_EDGE_SINGLE_ICW4  equ     00010011b       ; D4=1(ICW1) LTIM=0(front)
                                                  ; SNGL=1(seul, pas d'ICW3)
                                                  ; IC4=1(ICW4 suit)
 ICW2_VECTOR_BASE       equ     08h             ; IR0-IR7 -> INT 08h-0Fh
 ICW4_8086_MANUAL_EOI   equ     00000001b       ; uPM=1(8086/8088), AEOI=0(manuel)
-PIC_MASK_ONLY_IR0      equ     11111110b       ; OCW1 (IMR): demasque IR0 seulement
+PIC_MASK_TEST          equ     11101100b       ; OCW1 (IMR): demasque IR0/IR1/IR4
 
 init_8259:
         push    ax
@@ -3352,47 +3372,86 @@ init_8259:
         mov     al, ICW4_8086_MANUAL_EOI
         out     PIC_DATA, al
 
-        mov     al, PIC_MASK_ONLY_IR0
+        mov     al, PIC_MASK_TEST
         out     PIC_DATA, al    ; OCW1 (registre de masque IMR)
 
         xor     ax, ax
         mov     es, ax                          ; ES = 0000h (segment de l'IVT)
         mov     word [es:08h*4], irq0_test_handler
         mov     word [es:08h*4+2], cs
+        mov     word [es:09h*4], irq1_test_handler
+        mov     word [es:09h*4+2], cs
+        mov     word [es:0Ch*4], irq4_test_handler
+        mov     word [es:0Ch*4+2], cs
 
         pop     es
         pop     ax
         ret
 
 ; ============================================================
-; irq0_test_handler
-; Gestionnaire de test pour IR0 (8259, vecteur INT 08h) - PREMIERE
-; INTERRUPTION MATERIELLE reelle du projet (jusqu'ici, uniquement des
-; interruptions LOGICIELLES "esprit BIOS" - INT 10h/16h, voir plus
-; haut - qui n'ont jamais besoin du 8259). Declenchee par le
-; bouton-poussoir cable sur IR0.
+; irq0_test_handler / irq1_test_handler / irq4_test_handler
+; Gestionnaires de test pour IR0/IR1/IR4 (8259, vecteurs INT
+; 08h/09h/0Ch) - PREMIERES INTERRUPTIONS MATERIELLES reelles du projet
+; (jusqu'ici, uniquement des interruptions LOGICIELLES "esprit BIOS" -
+; INT 10h/16h, voir plus haut - qui n'ont jamais besoin du 8259).
+; irq0_test_handler est declenche par le bouton-poussoir cable
+; directement sur IR0; irq1_test_handler/irq4_test_handler par
+; l'Arduino (test de branchement Arduino->8259 - voir init_8259 -
+; AVANT le vrai protocole clavier/UART, qui remplacera ces 2
+; gestionnaires par de vrais pilotes lisant un octet via un port 8255
+; dedie).
 ;
-; Affiche un message sur l'UART via un appel DIRECT a uart_tx_string
-; (pas la macro "print", qui passe par INT 10h) - meme prudence que
-; int_not_implemented: ce gestionnaire doit rester independant de tout
-; ce qui pourrait lui-meme etre en cause si le mecanisme d'interruption
-; se comporte mal. Envoie ensuite un EOI NON SPECIFIQUE (OCW2 = 20h au
-; port de commande - obligatoire en mode EOI MANUEL, voir init_8259,
-; sinon le 8259 croit IR0 toujours "en service" et ne represente plus
-; jamais cette ligne, ni aucune de priorite egale ou inferieure), puis
-; IRET (restaure FLAGS empilees par le CPU a l'entree - IF y est remis
-; a 1 automatiquement, sans STI explicite ici).
+; Chacun affiche un message sur l'UART via un appel DIRECT a
+; uart_tx_string (pas la macro "print", qui passe par INT 10h) - meme
+; prudence que int_not_implemented: ces gestionnaires doivent rester
+; independants de tout ce qui pourrait lui-meme etre en cause si le
+; mecanisme d'interruption se comporte mal. Envoient ensuite un EOI
+; NON SPECIFIQUE (OCW2 = 20h au port de commande - obligatoire en mode
+; EOI MANUEL, voir init_8259, sinon le 8259 croit la ligne toujours
+; "en service" et ne represente plus jamais cette ligne, ni aucune de
+; priorite egale ou inferieure), puis IRET (restaure FLAGS empilees
+; par le CPU a l'entree - IF y est remis a 1 automatiquement, sans STI
+; explicite ici).
 ;
-; PAS de debounce volontairement: un bouton-poussoir mecanique rebondit
-; - PLUSIEURS interruptions par appui/relachement sont attendues pour
-; ce premier test (confirme meme que le mecanisme reagit a chaque
-; front, pas seulement au premier).
+; PAS de anti-rebond volontairement: un bouton-poussoir (mecanique, ou
+; lu et repulse par l'Arduino sans filtrage logiciel) rebondit -
+; PLUSIEURS interruptions par appui/relachement sont attendues pour ce
+; premier test (confirme meme que le mecanisme reagit a chaque front,
+; pas seulement au premier).
 ; ============================================================
 irq0_test_handler:
         push    ax
         push    si
 
         mov     si, txt_irq0_test
+        call    uart_tx_string
+
+        mov     al, 20h                 ; OCW2: EOI non specifique
+        out     PIC_CMD, al
+
+        pop     si
+        pop     ax
+        iret
+
+irq1_test_handler:
+        push    ax
+        push    si
+
+        mov     si, txt_irq1_test
+        call    uart_tx_string
+
+        mov     al, 20h                 ; OCW2: EOI non specifique
+        out     PIC_CMD, al
+
+        pop     si
+        pop     ax
+        iret
+
+irq4_test_handler:
+        push    ax
+        push    si
+
+        mov     si, txt_irq4_test
         call    uart_tx_string
 
         mov     al, 20h                 ; OCW2: EOI non specifique
@@ -3857,8 +3916,11 @@ txt_flag_cf_clear:      db      'NC', ' ', 0
 ; ---- int_not_implemented) ----
 txt_int_non_implementee: db     27,'[31m','*** Interruption non implementee ***',27,'[0m',13,10,0
 
-; ---- IR0 du 8259 (voir init_8259/irq0_test_handler) ----
+; ---- IR0/IR1/IR4 du 8259 (voir init_8259/irq0_test_handler/
+; ---- irq1_test_handler/irq4_test_handler) ----
 txt_irq0_test:          db      27,'[35m','*** IRQ0 declenchee (bouton-poussoir, 8259) ***',27,'[0m',13,10,0
+txt_irq1_test:          db      27,'[35m','*** IRQ1 declenchee (test Arduino - clavier, 8259) ***',27,'[0m',13,10,0
+txt_irq4_test:          db      27,'[35m','*** IRQ4 declenchee (test Arduino - UART, 8259) ***',27,'[0m',13,10,0
 
 ; ---- table des vecteurs (voir ivt_dump_action) ----
 txt_ivt_banniere:       db      27,'[36m',"=== Table des vecteurs d'interruption (IVT, INT 00h-27h) ===",27,'[0m',13,10,13,10,0
@@ -3868,6 +3930,8 @@ txt_ivt_sep:            db      ' : ', 0
 txt_ivt_10h:            db      27,'[32m',"int10h_handler -> Gestion de l'affichage (LCD I2C/UART)",27,'[0m',0
 txt_ivt_16h:            db      27,'[32m','int16h_handler -> Lecture clavier (non bloquante)',27,'[0m',0
 txt_ivt_irq0:           db      27,'[32m','irq0_test_handler -> Test IRQ0 (bouton-poussoir, 8259)',27,'[0m',0
+txt_ivt_irq1:           db      27,'[32m','irq1_test_handler -> Test IRQ1 (Arduino - clavier, 8259)',27,'[0m',0
+txt_ivt_irq4:           db      27,'[32m','irq4_test_handler -> Test IRQ4 (Arduino - UART, 8259)',27,'[0m',0
 txt_ivt_not_impl:       db      'int_not_implemented -> Non implementee',0
 
 txt_auteur:             db      '8088 sur breadboard version 2026',13,10
