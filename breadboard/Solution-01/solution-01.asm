@@ -361,13 +361,18 @@ start:
         jmp     .dump_menu
 .dump_3:
         cmp     al, '3'
-        jne     .dump_9
+        jne     .dump_4
         call    registers_dump_action   ; affiche les registres du 8088 (LCD+UART) - voir plus bas
         jmp     .dump_menu
-.dump_9:
-        cmp     al, '9'
-        jne     .dump_menu              ; touche non reconnue - redessine le menu
-        jmp     .main_menu
+.dump_4:
+        cmp     al, '4'
+        jne     .dump_esc
+        call    edit_run_action         ; edite/execute a 1000:0000 - voir plus bas
+        jmp     .dump_menu
+.dump_esc:
+        cmp     al, 27                  ; Echap: retour au menu principal (remplace
+        jne     .dump_menu              ; l'ancienne option "9) Home menu", non
+        jmp     .main_menu              ; affichee - touche non reconnue: redessine le menu
 
 ; ============================================================
 ; test_ram
@@ -1076,6 +1081,83 @@ edit_ram_commit_buffer:
 
         xor     ax, ax
         mov     es, ax                  ; ES = 0000h (RAM reelle, destination)
+        mov     di, dx                  ; DI = adresse destination courante
+
+        mov     bp, EDIT_BUFFER_OFF     ; BP = pointeur source (tampon, via SS)
+.copy_loop:
+        mov     al, [bp]
+        mov     [es:di], al
+        inc     di
+        inc     bp
+        loop    .copy_loop
+
+        pop     es
+        pop     bp
+        pop     di
+        pop     dx
+        pop     cx
+        pop     ax
+        ret
+
+; ============================================================
+; edit_run_load_buffer / edit_run_commit_buffer
+; Copies STRICTEMENT IDENTIQUES a edit_ram_load_buffer/commit_buffer
+; (voir ci-dessus), sauf que le cote "RAM reelle" vise le SEGMENT
+; 1000h (VAR_SEG/STACK_SEG) au lieu de 0000h - utilisees par
+; edit_run_action (voir plus bas, apres registers_dump_action) pour
+; editer/executer du code place a 1000:0000 (deuxieme bloc de 64K de
+; RAM). EDIT_BASE_OFF est TOUJOURS 0000h pour ces deux routines
+; (adresse fixe, imposee par edit_run_action - pas de saisie
+; d'adresse comme dans edit_ram_action).
+; ============================================================
+edit_run_load_buffer:
+        push    ax
+        push    cx
+        push    dx
+        push    si
+        push    bp
+        push    es
+
+        mov     bp, EDIT_BASE_OFF
+        mov     dx, [bp]                ; DX = adresse de depart (toujours 0000h ici)
+        mov     bp, EDIT_SIZE_OFF
+        mov     cx, [bp]                ; CX = taille (nombre d'octets a copier)
+
+        mov     ax, VAR_SEG
+        mov     es, ax                  ; ES = 1000h (RAM reelle, source)
+        mov     si, dx                  ; SI = adresse source courante
+
+        mov     bp, EDIT_BUFFER_OFF     ; BP = pointeur destination (tampon, via SS)
+.copy_loop:
+        mov     al, [es:si]
+        mov     [bp], al
+        inc     si
+        inc     bp
+        loop    .copy_loop
+
+        pop     es
+        pop     bp
+        pop     si
+        pop     dx
+        pop     cx
+        pop     ax
+        ret
+
+edit_run_commit_buffer:
+        push    ax
+        push    cx
+        push    dx
+        push    di
+        push    bp
+        push    es
+
+        mov     bp, EDIT_BASE_OFF
+        mov     dx, [bp]                ; DX = adresse de depart (toujours 0000h ici)
+        mov     bp, EDIT_SIZE_OFF
+        mov     cx, [bp]                ; CX = taille
+
+        mov     ax, VAR_SEG
+        mov     es, ax                  ; ES = 1000h (RAM reelle, destination)
         mov     di, dx                  ; DI = adresse destination courante
 
         mov     bp, EDIT_BUFFER_OFF     ; BP = pointeur source (tampon, via SS)
@@ -1933,6 +2015,319 @@ registers_dump_action:
         add     sp, 10                   ; libere FLAGS/SS/ES/DS/CS (5 mots, jamais
                                           ; modifies par cette routine - rien a
                                           ; restaurer, juste liberer la pile)
+        pop     bp
+        ret
+
+; ============================================================
+; edit_run_action
+; Option "4) Edit+Run RAM" du sous-menu Dump memory (voir .dump_menu,
+; start:): edite la RAM a une adresse FIXE, 1000:0000 (deuxieme bloc
+; de 64K, oppose au segment 0000h de edit_ram_action), et permet
+; d'EXECUTER le code qui y a ete saisi via la touche 'r'/'R'.
+;
+; Reutilise TOUT l'appareil de edit_ram_action (grille, defilement,
+; tampon, saisie hexa - edit_ram_draw_grid/cell_ddram/place_cursor/
+; write_current/scroll_to_cursor/move_left/right/up/down/advance sont
+; agnostiques du segment: ils ne touchent jamais a la "vraie" RAM,
+; seulement au tampon EDIT_BUFFER_OFF - voir leurs en-tetes), sauf
+; pour charger/valider le tampon vers la vraie RAM, qui utilise
+; edit_run_load_buffer/commit_buffer (segment 1000h) au lieu de
+; edit_ram_load_buffer/commit_buffer (segment 0000h).
+;
+; PAS de saisie d'adresse (contrairement a edit_ram_action): l'adresse
+; de depart est TOUJOURS 0000h (donc 1000:0000), fixee ici directement
+; dans EDIT_BASE_OFF. Seule la TAILLE est demandee (1-1024 octets,
+; memes limites que edit_ram_action via EDIT_MAX_SIZE) - largement
+; sous la zone reservee (PORTA_SHADOW_OFF et suivantes, EDIT_BUFFER_OFF
+; lui-meme, 0F800h-0FFFFh) et sous la pile active (SS=1000h, SP
+; demarre a 0000h/sommet - voir start:), donc sans risque de
+; chevauchement.
+;
+; Touches (identiques a edit_ram_action, PLUS 'r'/'R'):
+;   Echap - ANNULE toute l'edition (tampon abandonne), retour au menu.
+;   Q/q   - VALIDE (tampon -> RAM reelle a 1000:0000), SANS executer,
+;           retour au menu.
+;   R/r   - VALIDE (comme Q/q), PUIS EXECUTE le code a 1000:0000 (voir
+;           edit_run_execute_and_show) et affiche les registres sur
+;           l'UART, puis retour au menu.
+;   (fleches, chiffres hexa, Entree: voir edit_ram_action)
+; ============================================================
+edit_run_action:
+        push    ax
+        push    bx
+        push    cx
+        push    dx
+        push    si
+        push    di
+        push    es
+
+        call    lcd_init
+
+        ; --- adresse fixe 1000:0000 - pas de saisie, juste memorisee
+        ; dans EDIT_BASE_OFF pour edit_run_load_buffer/commit_buffer
+        ; et edit_ram_draw_grid (etiquette d'adresse UART) ---
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_BASE_OFF
+        mov     word [es:di], 0
+
+        print   txt_run_address, UART
+        gotoxy  0, 0, LCD
+        print   lcd_txt_run_addr, LCD
+
+        ; --- taille de la plage (en octets) - meme saisie que
+        ; edit_ram_action ---
+        mov     si, txt_edit_size_prefix
+        call    uart_tx_string
+        mov     si, txt_edit_size_prefix
+        lcd_show LCD_LINE2
+        mov     cl, 4
+        mov     ah, (LCD_LINE2 & 07Fh) + 11     ; 11 = longueur de "Size:    0x"
+        call    ps2_read_hex_editable           ; BX = taille saisie
+
+        mov     al, 13
+        call    uart_tx_byte
+        mov     al, 10
+        call    uart_tx_byte
+
+        cmp     bx, 0
+        je      .size_reject
+        cmp     bx, EDIT_MAX_SIZE
+        ja      .size_reject
+        jmp     .size_ok
+.size_reject:
+        print   txt_edit_size_invalid, UART
+        jmp     .done
+.size_ok:
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_SIZE_OFF
+        mov     [es:di], bx
+
+        print   txt_run_help, UART
+
+        call    edit_run_load_buffer            ; copie 1000:0000.. (RAM reelle) -> tampon
+
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, EDIT_CURSOR_OFF
+        mov     word [es:di], 0
+        mov     di, EDIT_WINDOW_ROW_OFF
+        mov     word [es:di], 0
+
+.redraw:
+        call    edit_ram_draw_grid
+
+.wait_key:
+        call    ps2_get_char
+
+        cmp     al, 27                          ; Echap: annule (rien recopie)
+        je      .done
+
+        cmp     al, 'q'
+        je      .commit_only
+        cmp     al, 'Q'
+        je      .commit_only
+
+        cmp     al, 'r'
+        je      .commit_and_run
+        cmp     al, 'R'
+        je      .commit_and_run
+
+        cmp     al, PS2_KEY_LEFT
+        jne     .not_left
+        call    edit_ram_move_left
+        jmp     .redraw
+.not_left:
+        cmp     al, PS2_KEY_RIGHT
+        jne     .not_right
+        call    edit_ram_move_right
+        jmp     .redraw
+.not_right:
+        cmp     al, PS2_KEY_UP
+        jne     .not_up
+        call    edit_ram_move_up
+        jmp     .redraw
+.not_up:
+        cmp     al, PS2_KEY_DOWN
+        jne     .not_down
+        call    edit_ram_move_down
+        jmp     .redraw
+.not_down:
+        mov     dl, al                   ; DL = touche deja lue (sauvegardee -
+                                          ; edit_ram_cell_ddram detruit AX)
+        call    edit_ram_cell_ddram      ; AH = adresse DDRAM de la case courante
+        mov     al, dl                   ; restaure AL = touche (AH inchange)
+        call    ps2_edit_byte_value      ; AL(entree)=touche deja lue, CF=1 si rien tape
+        jc      .redraw                  ; Entree sans saisie - rien a ecrire
+        mov     dl, bl                   ; DL = valeur a ecrire (survit a l'appel)
+        call    edit_ram_write_current   ; ecrit DANS LE TAMPON
+        call    edit_ram_advance         ; passe a la case suivante (ordre de lecture)
+        jmp     .redraw
+
+.commit_only:
+        call    edit_run_commit_buffer          ; recopie le tampon -> RAM reelle (1000:0000)
+        jmp     .done
+
+.commit_and_run:
+        call    edit_run_commit_buffer          ; recopie le tampon -> RAM reelle (1000:0000)
+        call    edit_run_execute_and_show       ; execute et affiche les registres (UART)
+
+.done:
+        pop     es
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
+        ret
+
+; ============================================================
+; edit_run_execute_and_show
+; Execute le code injecte par edit_run_action a l'adresse FIXE
+; 1000:0000 via un CALL FAR IMMEDIAT (opcode 9A, encode directement
+; par NASM pour "call seg:off" avec des constantes) - le code injecte
+; DOIT se terminer par RETF (retour LOINTAIN, depile IP ET CS),
+; JAMAIS un RET pres: un RET pres ne depilerait que IP et laisserait
+; CS empile, corrompant la pile et faisant planter la carte au retour
+; (voir README.md pour la regle destinee au programmeur du code
+; injecte).
+;
+; CAPTURE: CALL/RETF ne modifient JAMAIS un registre general ni
+; FLAGS - seulement CS:IP (et implicitement SP, via les push/pop
+; internes de l'instruction elle-meme). Donc, immediatement apres le
+; retour du CALL FAR, TOUT registre est EXACTEMENT ce que le code
+; injecte a laisse - a condition de ne rien faire d'autre qu'empiler
+; (jamais de MOV/ADD/etc. qui le detruirait) avant de les avoir tous
+; sauvegardes. Meme motif que registers_dump_action (voir plus haut),
+; mais SANS le decalage du "CALL qui a mene ici": ici, un seul mot
+; ("push bp") est empile avant "mov bp,sp", donc:
+;   [bp+0] = BP (tel que laisse par le code injecte)
+;   bp+2   = SP (tel que laisse par le code injecte, PAS relu depuis
+;            la pile - simple calcul, comme "bp+4" dans
+;            registers_dump_action, mais avec un seul mot de decalage
+;            ici au lieu de deux puisqu'il n'y a pas de "CALL" externe
+;            a comptabiliser)
+;
+; ATTENTION: si le code injecte modifie SS sans le restaurer, les
+; push/pop de CETTE routine (qui s'executent APRES son retour)
+; cibleraient une pile invalide - risque inherent a l'execution de
+; code arbitraire, comme la commande "G" de DEBUG.COM.
+;
+; Affiche UNIQUEMENT sur l'UART (demande explicite - pas de LCD pour
+; cet affichage): AX/BX/CX/DX/SI/DI/SP/BP/DS/ES/SS/CS en hexadecimal
+; et binaire (2 registres par ligne, voir print_reg_hex_bin_uart),
+; puis FLAGS sur sa propre ligne (hexa + binaire + mnemoniques,
+; reutilise txt_reg_*/txt_flag_*_set/clear/uart_flag_bit - voir
+; registers_dump_action). IP non affiche (aucune signification utile
+; ici, contrairement a registers_dump_action).
+; ============================================================
+edit_run_execute_and_show:
+        call    1000h:0000h              ; CALL FAR - le code injecte doit finir par RETF
+
+        push    bp
+        mov     bp, sp                   ; [bp+0] = BP (code injecte); bp+2 = SP (code injecte)
+
+        pushf                            ; [bp-2]  = FLAGS
+        push    ss                       ; [bp-4]  = SS
+        push    es                       ; [bp-6]  = ES
+        push    ds                       ; [bp-8]  = DS
+        push    cs                       ; [bp-10] = CS
+        push    ax                       ; [bp-12] = AX
+        push    bx                       ; [bp-14] = BX
+        push    cx                       ; [bp-16] = CX
+        push    dx                       ; [bp-18] = DX
+        push    si                       ; [bp-20] = SI
+        push    di                       ; [bp-22] = DI
+
+        print   txt_run_result_banner, UART
+
+        print   txt_reg_ax, UART
+        mov     ax, [bp-12]
+        call    print_reg_hex_bin_uart
+        print   txt_reg_pair_sep, UART
+        print   txt_reg_bx, UART
+        mov     ax, [bp-14]
+        call    print_reg_hex_bin_uart
+        print   txt_crlf, UART
+
+        print   txt_reg_cx, UART
+        mov     ax, [bp-16]
+        call    print_reg_hex_bin_uart
+        print   txt_reg_pair_sep, UART
+        print   txt_reg_dx, UART
+        mov     ax, [bp-18]
+        call    print_reg_hex_bin_uart
+        print   txt_crlf, UART
+
+        print   txt_reg_si, UART
+        mov     ax, [bp-20]
+        call    print_reg_hex_bin_uart
+        print   txt_reg_pair_sep, UART
+        print   txt_reg_di, UART
+        mov     ax, [bp-22]
+        call    print_reg_hex_bin_uart
+        print   txt_crlf, UART
+
+        print   txt_reg_sp, UART
+        mov     ax, bp
+        add     ax, 2                    ; SP tel que laisse par le code injecte (voir en-tete)
+        call    print_reg_hex_bin_uart
+        print   txt_reg_pair_sep, UART
+        print   txt_reg_bp, UART
+        mov     ax, [bp+0]
+        call    print_reg_hex_bin_uart
+        print   txt_crlf, UART
+
+        print   txt_reg_ds, UART
+        mov     ax, [bp-8]
+        call    print_reg_hex_bin_uart
+        print   txt_reg_pair_sep, UART
+        print   txt_reg_es, UART
+        mov     ax, [bp-6]
+        call    print_reg_hex_bin_uart
+        print   txt_crlf, UART
+
+        print   txt_reg_ss, UART
+        mov     ax, [bp-4]
+        call    print_reg_hex_bin_uart
+        print   txt_reg_pair_sep, UART
+        print   txt_reg_cs, UART
+        mov     ax, [bp-10]
+        call    print_reg_hex_bin_uart
+        print   txt_crlf, UART
+        print   txt_crlf, UART           ; ligne vide avant FLAGS
+
+        print   txt_reg_flags_prefix, UART
+        mov     ax, [bp-2]
+        call    print_reg_hex_bin_uart
+        print   txt_reg_flags_sep, UART
+
+        mov     dx, [bp-2]
+        uart_flag_bit 0800h, txt_flag_of_set, txt_flag_of_clear
+        uart_flag_bit 0400h, txt_flag_df_set, txt_flag_df_clear
+        uart_flag_bit 0200h, txt_flag_if_set, txt_flag_if_clear
+        uart_flag_bit 0080h, txt_flag_sf_set, txt_flag_sf_clear
+        uart_flag_bit 0040h, txt_flag_zf_set, txt_flag_zf_clear
+        uart_flag_bit 0010h, txt_flag_af_set, txt_flag_af_clear
+        uart_flag_bit 0004h, txt_flag_pf_set, txt_flag_pf_clear
+        uart_flag_bit 0001h, txt_flag_cf_set, txt_flag_cf_clear
+        print   txt_crlf, UART
+        print   txt_crlf, UART
+
+        ; --- restaure AX/BX/CX/DX/SI/DI (registres "generaux" de
+        ; CETTE routine - ils ne l'etaient plus depuis les push
+        ; ci-dessus) AVANT de liberer FLAGS/SS/ES/DS/CS (5 mots,
+        ; jamais modifies, juste empiles pour lecture) - meme ordre
+        ; que registers_dump_action.done ---
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
+        add     sp, 10
         pop     bp
         ret
 
@@ -3005,7 +3400,8 @@ txt_menu_dump:          db      27,'[36m','--- Menu Dump memory ---',27,'[0m',13
                         db      '1) Dump memory',13,10
                         db      '2) Edit RAM',13,10
                         db      '3) Registres CPU',13,10
-                        db      '9) Home menu',13,10,13,10,0
+                        db      '4) Edit+Run RAM',13,10
+                        db      '(Echap: retour au menu principal)',13,10,13,10,0
 
 ; ---- invite "Edit RAM" (voir edit_ram_action) ----
 txt_edit_address_prefix: db     'Address: 0x', 0
@@ -3014,6 +3410,11 @@ txt_edit_help:           db     27,'[36m','Fleches G/D: colonne | Fleches H/B: l
 
 txt_edit_ivt_reject:    db      27,'[31m',"*** Adresse dans l'IVT (< 0x0400) - edition annulee ***",27,'[0m',13,10,13,10,0
 txt_edit_size_invalid:  db      27,'[31m','*** Taille invalide (1-1024 octets, dans les limites du segment) - edition annulee ***',27,'[0m',13,10,13,10,0
+
+; ---- invites "Edit+Run RAM" (voir edit_run_action) ----
+txt_run_address:        db      27,'[36m',"Adresse fixe: 1000:0000 (2e bloc de 64K)",27,'[0m',13,10,0
+txt_run_help:            db     27,'[36m','Fleches G/D: colonne | Fleches H/B: ligne (defilement) | chiffre hexa: editer | Entree: valider la case | Q: enregistrer (sans executer) | R: enregistrer et executer (RETF attendu a la fin) | Echap: annuler tout',27,'[0m',13,10,13,10,0
+txt_run_result_banner:  db      27,'[34m','=== Execution terminee (1000:0000, RETF) - Registres ===',27,'[0m',13,10,0
 
 ; ---- invites "Dump memory" (voir dump_memory_action) - "End:   0x"
 ; ---- a la meme longueur (9) que "Start: 0x" pour que les chiffres
@@ -3048,11 +3449,16 @@ lcd_text lcd_txt_menu_main_l3, '3) LED Show on PC', 20
 lcd_text lcd_txt_menu_main_l4, '4) Edit RAM', 20
 
 ; ---- menu Dump memory (voir start:) - les 4 lignes sont utilisees
-; ---- depuis l'ajout de l'option "3) Registres CPU" ----
+; ---- depuis l'ajout de l'option "3) Registres CPU"; "9) Home menu"
+; ---- a ete remplacee par "4) Edit+Run RAM" - Echap (non affiche a
+; ---- l'ecran) fait maintenant office de retour au menu principal ----
 lcd_text lcd_txt_menu_dump_l1, '1) Dump memory', 20
 lcd_text lcd_txt_menu_dump_l2, '2) Edit RAM', 20
 lcd_text lcd_txt_menu_dump_l3, '3) Registres CPU', 20
-lcd_text lcd_txt_menu_dump_l4, '9) Home menu', 20
+lcd_text lcd_txt_menu_dump_l4, '4) Edit+Run RAM', 20
+
+; ---- invite "Edit+Run RAM" (voir edit_run_action) ----
+lcd_text lcd_txt_run_addr, 'Run: 1000:0000', 20
 
 ; ---- registres CPU (voir registers_dump_action) - prefixes courts
 ; ---- (LCD 4x20, contrairement aux prefixes UART txt_reg_* qui

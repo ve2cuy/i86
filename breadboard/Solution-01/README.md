@@ -560,8 +560,11 @@ des versions précédentes : chaque action est déclenchée par une touche
 1) Dump memory
 2) Edit RAM
 3) Registres CPU
-9) Home menu
+4) Edit+Run RAM
 ```
+
+La touche **Échap** (non affichée à l'écran, remplace l'ancienne
+option "`9) Home menu`") retourne directement au menu principal.
 
 **Dump memory** (option 1 du menu Dump) : demande une adresse de
 **départ** puis une adresse de **fin**, chacune saisie au format
@@ -729,6 +732,53 @@ chacun sur la ligne 4, **majuscule si actif, minuscule sinon** —
 | Toute autre touche (sauf Échap) | Ignorée — pas de redessin inutile |
 | Échap | Retour au menu Dump memory |
 
+**Edit+Run RAM** (option 4 du menu Dump — `edit_run_action`) : même
+éditeur par plage/tampon qu'`Edit RAM` ci-dessus, mais à une **adresse
+fixe**, `1000:0000` (le **deuxième bloc de 64 Ko** de RAM — par
+opposition au segment `0000h` d'`Edit RAM`), et avec en plus la
+possibilité d'**exécuter** le code qui vient d'y être saisi. Aucune
+saisie d'adresse (fixée à `0000h` dans ce segment) — seule la taille
+est demandée (`1`-`0x0400` octets, mêmes limites qu'`Edit RAM`) :
+
+```
+Run: 1000:0000
+Size:    0x0010
+```
+
+| Touche | Effet |
+|---|---|
+| (flèches, chiffre hexa, Entrée) | Identiques à `Edit RAM` |
+| `Q` / `q` | **Enregistre** le tampon dans la RAM réelle (`1000:0000`), **sans exécuter**, retour au menu |
+| `R` / `r` | **Enregistre** (comme `Q`/`q`), **PUIS EXÉCUTE** le code à `1000:0000` (voir ci-dessous), affiche les registres résultants sur l'UART, retour au menu |
+| Échap | **Annule** — la RAM réelle n'est pas modifiée, retour au menu |
+
+L'exécution se fait par un **`CALL FAR` immédiat** vers `1000:0000`
+(opcode `9A`, encodé directement par NASM pour `call seg:off` avec des
+constantes). ⚠️ **Le code saisi doit obligatoirement se terminer par
+`RETF`** (retour lointain, dépile `IP` **et** `CS`) — **jamais** un
+`RET` (proche) : celui-ci ne dépilerait que `IP` et laisserait `CS`
+empilé, corrompant la pile et plantant la carte au retour.
+
+`CALL`/`RETF` ne modifient jamais un registre général ni les `FLAGS` :
+immédiatement après le retour, chaque registre reflète donc exactement
+ce que le code exécuté a laissé. Même technique de capture par trame
+de pile que `Registres CPU` ci-dessus (chaque registre empilé puis
+relu via `[bp±N]`), affichée **uniquement sur l'UART** (demande
+explicite — pas de LCD pour cet affichage), au même format hexa+binaire
+avec `FLAGS` sur sa propre ligne :
+
+```
+=== Execution terminee (1000:0000, RETF) - Registres ===
+AX=0005  0000000000000101    BX=0000  0000000000000000
+...
+FLAGS=0246  0000001001000110  NV UP EI PL NZ NA PO NC
+```
+
+⚠️ Si le code exécuté modifie `SS` sans le restaurer, l'affichage des
+registres qui suit (qui utilise `push`/`pop` pour lire la pile)
+ciblerait une pile invalide — risque inhérent à l'exécution de code
+arbitraire, comme la commande `G` de DEBUG.COM.
+
 | Option | Action | Détail |
 |---|---|---|
 | Test RAM | `test_ram` | Teste la RAM 128 Ko, rapporte via UART+LCD (129 024 octets testés depuis l'agrandissement de la zone réservée pour le tampon d'Edit RAM — voir plus bas) |
@@ -736,7 +786,8 @@ chacun sur la ligne 4, **majuscule si actif, minuscule sinon** —
 | LED Show on PC | `effet1` | Inchangée — chenillard sur le Port C |
 | Edit RAM | `edit_ram_action` (par plage, avec tampon) | Voir ci-dessus |
 | Registres CPU | `registers_dump_action` | Voir ci-dessus |
-| Home menu | — | Retour au menu principal depuis le menu Dump |
+| Edit+Run RAM | `edit_run_action` (édite et exécute à `1000:0000`) | Voir ci-dessus |
+| (Échap) | — | Retour au menu principal depuis le menu Dump (remplace l'ancienne option affichée "9) Home menu") |
 
 État partagé (`VAR_SEG`, voir `include/hardware.inc`) : `edit_ram_action`
 utilise `EDIT_BASE_OFF`/`EDIT_SIZE_OFF` (adresse/taille saisies),
