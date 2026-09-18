@@ -541,20 +541,20 @@ hexadécimales/décimales), sans changement de comportement.
 ## Menu interactif
 
 Affiché après le splash, sur l'UART **et** le LCD parallèle (une
-option par ligne — 4 lignes, 4 options). Remplace le POST automatique
-des versions précédentes : chaque action est déclenchée par une touche
-(clavier PS/2), et le menu se redessine après chaque action.
+option par ligne). Remplace le POST automatique des versions
+précédentes : chaque action est déclenchée par une touche (clavier
+PS/2), et le menu se redessine après chaque action.
 
-**Menu principal** :
+**Menu principal** (3 options — `4) Edit RAM` a été retirée : déjà
+disponible via `2) Memory functions` ci-dessous) :
 
 ```
 1) Test RAM
-2) Dump memory
+2) Memory functions
 3) LED Show on PC
-4) Edit RAM
 ```
 
-**Menu "Dump memory"** (option 2 du menu principal) :
+**Menu "Memory functions"** (option 2 du menu principal) :
 
 ```
 1) Dump memory
@@ -566,7 +566,7 @@ des versions précédentes : chaque action est déclenchée par une touche
 La touche **Échap** (non affichée à l'écran, remplace l'ancienne
 option "`9) Home menu`") retourne directement au menu principal.
 
-**Dump memory** (option 1 du menu Dump) : demande une adresse de
+**Dump memory** (option 1 du menu Memory functions) : demande une adresse de
 **départ** puis une adresse de **fin**, chacune saisie au format
 `SEGMENT:OFFSET` (4+4 chiffres hexadécimaux, retour arrière pour
 corriger — même mécanique que `Edit RAM` ci-dessous) :
@@ -611,7 +611,7 @@ bonne plage utilise le même segment que le vecteur de reset matériel :
 derniers octets physiques de la ROM : vecteur de reset + signature).
 
 La touche **Échap** interrompt un dump en cours et retourne
-immédiatement au menu Dump memory. Vérifiée de façon **non bloquante**
+immédiatement au menu Memory functions. Vérifiée de façon **non bloquante**
 avant chaque ligne (`CLOCK`/`PB0` est haut au repos — un simple
 `IN AL,PORTB` détecte qu'une trame est en cours sans ralentir le dump
 tant qu'aucune touche n'est pressée) : effort raisonnable plutôt que
@@ -621,10 +621,11 @@ de ms sur l'UART logiciel à 9600 bauds) peut échapper à la
 vérification suivante ; appuyer de nouveau sur Échap si le dump ne
 s'arrête pas immédiatement.
 
-**Edit RAM** (option 4 du menu principal, ou option 2 du menu Dump —
-même action `edit_ram_action` dans les deux cas) : éditeur de RAM
-**par plage, avec tampon** (annulation possible) — remplace la version
-à adresse unique du premier jalon. Demande, avec retour arrière
+**Edit RAM** (option 2 du menu Memory functions — seul point d'accès
+depuis la refonte du menu principal, qui n'offre plus cette option
+directement) : éditeur de RAM **par plage, avec tampon** (annulation
+possible) — remplace la version à adresse unique du premier jalon.
+Demande, avec retour arrière
 possible sur chaque saisie :
 
 ```
@@ -690,7 +691,7 @@ l'étiquette, ou l'inverse.
 | `Q` / `q` | **Enregistre** le tampon dans la RAM réelle, retour au menu |
 | Échap | **Annule** — la RAM réelle n'est pas modifiée, retour au menu |
 
-**Registres CPU** (option 3 du menu Dump — `registers_dump_action`) :
+**Registres CPU** (option 3 du menu Memory functions — `registers_dump_action`) :
 affiche l'état courant des registres du 8088 (`AX`/`BX`/`CX`/`DX`/`SI`/
 `DI`/`BP`/`SP`/`CS`/`DS`/`ES`/`SS`/`IP`/`FLAGS`). **Capture immédiate à
 l'entrée** (avant le moindre usage des registres généraux comme
@@ -736,9 +737,9 @@ chacun sur la ligne 4, **majuscule si actif, minuscule sinon** —
 |---|---|
 | Flèches gauche/droite | Bascule entre les 2 pages du LCD |
 | Toute autre touche (sauf Échap) | Ignorée — pas de redessin inutile |
-| Échap | Retour au menu Dump memory |
+| Échap | Retour au menu Memory functions |
 
-**Edit+Run RAM** (option 4 du menu Dump — `edit_run_action`) : même
+**Edit+Run RAM** (option 4 du menu Memory functions — `edit_run_action`) : même
 éditeur par plage/tampon qu'`Edit RAM` ci-dessus, mais à une **adresse
 fixe**, `1000:0000` (le **deuxième bloc de 64 Ko** de RAM — par
 opposition au segment `0000h` d'`Edit RAM`), et avec en plus la
@@ -812,7 +813,7 @@ les restaurer explicitement avant `RETF` :
 | Edit RAM | `edit_ram_action` (par plage, avec tampon) | Voir ci-dessus |
 | Registres CPU | `registers_dump_action` | Voir ci-dessus |
 | Edit+Run RAM | `edit_run_action` (édite et exécute à `1000:0000`) | Voir ci-dessus |
-| (Échap) | — | Retour au menu principal depuis le menu Dump (remplace l'ancienne option affichée "9) Home menu") |
+| (Échap) | — | Retour au menu principal depuis le menu Memory functions (remplace l'ancienne option affichée "9) Home menu") |
 
 État partagé (`VAR_SEG`, voir `include/hardware.inc`) : `edit_ram_action`
 utilise `EDIT_BASE_OFF`/`EDIT_SIZE_OFF` (adresse/taille saisies),

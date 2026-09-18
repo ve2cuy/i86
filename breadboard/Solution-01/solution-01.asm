@@ -283,7 +283,7 @@ start:
         print   txt_auteur, UART
 
 ; ============================================================
-; Menu principal / menu Dump memory
+; Menu principal / menu Memory functions
 ; Chaque option est declenchee par l'utilisateur (clavier PS/2 -
 ; voir lib/ps2.asm, ps2_get_char) au lieu de s'enchainer
 ; automatiquement comme avant. Le menu courant est redessine
@@ -299,8 +299,6 @@ start:
         print   lcd_txt_menu_main_l2, LCD
         gotoxy  2, 0, LCD
         print   lcd_txt_menu_main_l3, LCD
-        gotoxy  3, 0, LCD
-        print   lcd_txt_menu_main_l4, LCD
 
         call    ps2_get_char            ; bloque jusqu'a une touche reconnue
 
@@ -319,7 +317,7 @@ start:
         jmp     .dump_menu
 .main_3:
         cmp     al, '3'
-        jne     .main_4
+        jne     .main_menu              ; touche non reconnue - redessine le menu
         call    lcd_init
         gotoxy  0, 0, LCD
         print   lcd_txt_run_led_l1, LCD
@@ -329,11 +327,6 @@ start:
         print   lcd_txt_run_led_l4, LCD ; texte fixe (ligne 3 = progression
                                          ; live, mise a jour par effet1)
         call    effet1                  ; animation Port C (chenillard)
-        jmp     .main_menu
-.main_4:
-        cmp     al, '4'
-        jne     .main_menu              ; touche non reconnue - redessine le menu
-        call    edit_ram_action
         jmp     .main_menu
 
 .dump_menu:
@@ -517,7 +510,7 @@ mem_calc_physical:
 ; ============================================================
 ; dump_memory_action
 ; Consolide les anciennes options "Dump ROM" et "Dump first 4k RAM"
-; du menu Dump memory sous une seule action: demande une adresse de
+; du menu Memory functions sous une seule action: demande une adresse de
 ; DEPART puis une adresse de FIN, chacune saisie au clavier sous la
 ; forme SEGMENT:OFFSET (4+4 chiffres hexa, retour arriere pour
 ; corriger - voir ps2_read_hex_editable), puis affiche en
@@ -1671,7 +1664,7 @@ print_reg_hex_bin_uart:
 
 ; ============================================================
 ; registers_dump_action
-; Option "3) Registres CPU" du sous-menu Dump memory (voir
+; Option "3) Registres CPU" du sous-menu Memory functions (voir
 ; .dump_menu, start:): affiche l'etat courant des registres du 8088
 ; (AX,BX,CX,DX,SI,DI,BP,SP,CS,DS,ES,SS,IP,FLAGS) sur le LCD (pagine
 ; sur 2 ecrans - 14 valeurs, trop pour les 4x20 caracteres
@@ -1707,7 +1700,7 @@ print_reg_hex_bin_uart:
 ;
 ; Navigation (comme edit_ram_action): fleches Gauche/Droite pour
 ; changer de page LCD (1/2, avec retour a la page 1 depuis la page
-; 2), Echap pour revenir au sous-menu Dump memory. Toute autre touche
+; 2), Echap pour revenir au sous-menu Memory functions. Toute autre touche
 ; est ignoree (pas de redessin inutile - rien ne change tant que la
 ; page ne change pas). L'UART, lui, affiche tout en une seule fois
 ; des l'entree (un flux serie n'a pas de largeur limitee comme le
@@ -2011,7 +2004,7 @@ registers_dump_action:
 .wait_key:
         call    ps2_get_char
 
-        cmp     al, 27                   ; Echap: retour au sous-menu Dump memory
+        cmp     al, 27                   ; Echap: retour au sous-menu Memory functions
         je      .done
 
         cmp     al, PS2_KEY_LEFT
@@ -2045,7 +2038,7 @@ registers_dump_action:
 
 ; ============================================================
 ; edit_run_action
-; Option "4) Edit+Run RAM" du sous-menu Dump memory (voir .dump_menu,
+; Option "4) Edit+Run RAM" du sous-menu Memory functions (voir .dump_menu,
 ; start:): edite la RAM a une adresse FIXE, 1000:0000 (deuxieme bloc
 ; de 64K, oppose au segment 0000h de edit_ram_action), et permet
 ; d'EXECUTER le code qui y a ete saisi via la touche 'r'/'R'.
@@ -3530,15 +3523,16 @@ txt_auteur:             db      '8088 sur breadboard version 2026',13,10
                         db      'Par Alain Boudreault, aka VE2CUY',13,10
                         db      '--------------------------------',13,10,13,10,0
 
-; ---- menu principal / menu Dump memory (voir start:) - textes UART,
-; ---- affiches en plus des lignes LCD dediees ci-dessous ----
+; ---- menu principal / menu Memory functions (voir start:) - textes
+; ---- UART, affiches en plus des lignes LCD dediees ci-dessous.
+; ---- "4) Edit RAM" retire du menu principal: disponible en "2) Edit
+; ---- RAM" du sous-menu Memory functions (option "2" ci-dessous) ----
 txt_menu_main:          db      27,'[36m','--- Menu principal ---',27,'[0m',13,10
                         db      '1) Test RAM',13,10
-                        db      '2) Dump memory',13,10
-                        db      '3) LED Show on PC',13,10
-                        db      '4) Edit RAM',13,10,13,10,0
+                        db      '2) Memory functions',13,10
+                        db      '3) LED Show on PC',13,10,13,10,0
 
-txt_menu_dump:          db      27,'[36m','--- Menu Dump memory ---',27,'[0m',13,10
+txt_menu_dump:          db      27,'[36m','--- Menu Memory functions ---',27,'[0m',13,10
                         db      '1) Dump memory',13,10
                         db      '2) Edit RAM',13,10
                         db      '3) Registres CPU',13,10
@@ -3590,16 +3584,17 @@ lcd_txt_splash_l3:      times   20 db '-'       ; remplissage '-' (pas ' ') - ho
 lcd_text lcd_txt_splash_l4, '(c) VE2CUY 2026', 20
 
 ; ---- menu principal (voir start:) - 1 ligne LCD par option, meme
-; ---- texte que le menu UART (txt_menu_main) ----
+; ---- texte que le menu UART (txt_menu_main) - seulement 3 options
+; ---- ("4) Edit RAM" retire, disponible via "2) Memory functions") ----
 lcd_text lcd_txt_menu_main_l1, '1) Test RAM', 20
-lcd_text lcd_txt_menu_main_l2, '2) Dump memory', 20
+lcd_text lcd_txt_menu_main_l2, '2) Memory functions', 20
 lcd_text lcd_txt_menu_main_l3, '3) LED Show on PC', 20
-lcd_text lcd_txt_menu_main_l4, '4) Edit RAM', 20
 
-; ---- menu Dump memory (voir start:) - les 4 lignes sont utilisees
-; ---- depuis l'ajout de l'option "3) Registres CPU"; "9) Home menu"
-; ---- a ete remplacee par "4) Edit+Run RAM" - Echap (non affiche a
-; ---- l'ecran) fait maintenant office de retour au menu principal ----
+; ---- menu Memory functions (voir start:) - les 4 lignes sont
+; ---- utilisees depuis l'ajout de l'option "3) Registres CPU"; "9)
+; ---- Home menu" a ete remplacee par "4) Edit+Run RAM" - Echap (non
+; ---- affiche a l'ecran) fait maintenant office de retour au menu
+; ---- principal ----
 lcd_text lcd_txt_menu_dump_l1, '1) Dump memory', 20
 lcd_text lcd_txt_menu_dump_l2, '2) Edit RAM', 20
 lcd_text lcd_txt_menu_dump_l3, '3) Registres CPU', 20
