@@ -1,8 +1,6 @@
 ; ============================================================
 ; ps2.asm
-; Lecture d'un clavier PS/2 en polling pur (AUCUNE interruption -
-; le projet n'en utilise pas encore, voir Directives.md), via le
-; Port B du 8255:
+; Lecture d'un clavier PS/2 en polling pur, via le Port B du 8255:
 ;   PB0 = CLOCK
 ;   PB1 = DATA
 ; Necessite des resistances de tirage externes (~4,7-10 kOhm vers
@@ -20,11 +18,19 @@
 ; transmission), le CLAVIER est maitre de l'horloge: il genere
 ; CLOCK (~10-16 kHz) de facon ASYNCHRONE, quand une touche est
 ; pressee/relachee. Consequence: ps2_read_byte (et tout ce qui en
-; depend: ps2_get_char, ps2_read_hex) DOIT tourner sans interruption
-; logicielle du debut a la fin d'une trame (aucun autre code n'a la
-; main) - un front d'horloge manque a cause d'un traitement en cours
-; ailleurs corromprait la lecture. Jamais appelee au milieu d'une
-; boucle deja engagee ailleurs (ex: test_ram).
+; depend: ps2_get_char, ps2_read_hex) DOIT tourner sans INTERRUPTION
+; LOGICIELLE (boucle) du debut a la fin d'une trame - jamais appelee
+; au milieu d'une boucle deja engagee ailleurs (ex: test_ram). Depuis
+; l'ajout du 8259 (voir Directives.md), une INTERRUPTION MATERIELLE
+; (IRQ) authentique peut aussi survenir a tout moment pendant une
+; trame et voler quelques microsecondes au CPU AVANT de rendre la
+; main - un front d'horloge manque a cause de ce delai corromprait la
+; lecture (parite/stop invalides, voir ps2_read_byte). Risque
+; theorique pour l'instant (seule IR0, un bouton-poussoir de test
+; manuel, est demasquee - collision improbable avec une frappe
+; clavier), mais A RECONSIDERER SERIEUSEMENT une fois l'UART/clavier
+; reellement geres par IRQ (voir la discussion Arduino,
+; Directives.md).
 ;
 ; Format d'une trame (11 bits, LSB en premier): start(0), 8 bits de
 ; donnees, parite IMPAIRE, stop(1). Chaque bit est stable sur DATA
@@ -46,7 +52,10 @@
 %define PS2_ASM
 
 %include "include/hardware.inc"
-%include "lib/lcd.asm"          ; reutilise lcd_tx_hex_nibble (echo saisie hexa)
+%include "lib/lcd_i2c.asm"      ; reutilise i2c_lcd_tx_hex_nibble (echo saisie
+                                  ; hexa) - LCD I2C, plus le LCD parallele
+                                  ; (voir Directives.md: tout l'affichage LCD
+                                  ; est passe au LCD I2C)
 %include "lib/uart.asm"         ; reutilise uart_tx_hex_nibble (echo saisie hexa)
 
 PS2_CLOCK       equ     00000001b       ; PB0
@@ -404,7 +413,7 @@ ps2_read_hex_editable:
         mov     al, dl
         call    uart_tx_hex_nibble
         mov     al, dl
-        call    lcd_tx_hex_nibble
+        call    i2c_lcd_tx_hex_nibble
         inc     dh
         cmp     dh, ch
         jb      .next_key
@@ -426,13 +435,13 @@ ps2_read_hex_editable:
         mov     al, ah          ; --- efface visuellement sur le LCD:
         add     al, dh          ; repositionne sur la case effacee, ecrit
         or      al, 80h         ; un espace, repositionne de nouveau (le
-        call    lcd_command     ; prochain chiffre tape doit ecraser cette
+        call    i2c_lcd_command     ; prochain chiffre tape doit ecraser cette
         mov     al, ' '         ; meme case, pas la suivante) ---
-        call    lcd_data
+        call    i2c_lcd_data
         mov     al, ah
         add     al, dh
         or      al, 80h
-        call    lcd_command
+        call    i2c_lcd_command
         jmp     .next_key
 
 ; ============================================================
@@ -492,7 +501,7 @@ ps2_edit_byte_value:
         mov     al, dl
         call    uart_tx_hex_nibble
         mov     al, dl
-        call    lcd_tx_hex_nibble
+        call    i2c_lcd_tx_hex_nibble
         inc     dh
         jmp     .next_key
 .backspace:
@@ -510,13 +519,13 @@ ps2_edit_byte_value:
         mov     al, ah
         add     al, dh
         or      al, 80h
-        call    lcd_command
+        call    i2c_lcd_command
         mov     al, ' '
-        call    lcd_data
+        call    i2c_lcd_data
         mov     al, ah
         add     al, dh
         or      al, 80h
-        call    lcd_command
+        call    i2c_lcd_command
         jmp     .next_key
 .commit:
         cmp     dh, 0
