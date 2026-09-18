@@ -556,7 +556,13 @@ disponible via `2) Memory functions` ci-dessous) :
 2) Edit RAM
 3) Registres CPU
 4) Edit+Run RAM
+5) IVT
 ```
+
+⚠️ Le LCD I2C n'a que 4 lignes : il n'affiche toujours que les options
+1-4 (comme avant l'ajout de `5) IVT`) — l'option `5` reste
+fonctionnelle au clavier, seulement pas listée sur l'écran, même
+convention que l'ancienne option "`9) Home menu`" (voir plus bas).
 
 La touche **Échap** (non affichée à l'écran, remplace l'ancienne
 option "`9) Home menu`") retourne directement au menu principal.
@@ -813,6 +819,39 @@ les restaurer explicitement avant `RETF` :
   franchement (ex. `mov sp, ...`) seulement si ce cas précis est
   volontairement celui testé.
 
+**IVT** (option 5 du menu Memory functions — `ivt_dump_action`, non
+listée sur le LCD, voir plus haut) : affiche le contenu des 256
+vecteurs de l'IVT (`INT 00h`-`FFh`).
+
+Sur l'UART, toute la table d'un coup, une seule fois à l'entrée :
+
+```
+INT 10h -> C000:1234 : int10h_handler -> Gestion de l'affichage (LCD I2C/UART)
+INT 11h -> C000:0AA6 : int_not_implemented -> Non implementee
+```
+
+Les vecteurs **implémentés** (`int10h_handler`/`int16h_handler`/
+`irq0_test_handler`) s'affichent **en vert** ; tous les autres (en
+pratique, systématiquement `int_not_implemented`) sans couleur.
+L'identification compare l'**offset** lu dans chaque entrée de l'IVT
+aux adresses des 3 gestionnaires réels connus — le segment n'est pas
+vérifié séparément (tous les gestionnaires vivent dans la même ROM).
+
+Sur le LCD I2C, une grille **défilante** (256 vecteurs, 4 visibles à la
+fois, un par ligne — pas de couleur possible) :
+
+```
+00h  C000:0AA6
+01h  C000:0AA6
+02h  C000:0AA6
+03h  C000:0AA6
+```
+
+| Touche | Effet |
+|---|---|
+| Flèches haut/bas | Défilent d'un vecteur (fixées aux bords de la table) |
+| Échap | Retour au menu Memory functions |
+
 | Option | Action | Détail |
 |---|---|---|
 | Test RAM | `test_ram` | Teste la RAM 128 Ko, rapporte via UART+LCD (129 024 octets testés depuis l'agrandissement de la zone réservée pour le tampon d'Edit RAM — voir plus bas) |
@@ -821,6 +860,7 @@ les restaurer explicitement avant `RETF` :
 | Edit RAM | `edit_ram_action` (par plage, avec tampon) | Voir ci-dessus |
 | Registres CPU | `registers_dump_action` | Voir ci-dessus |
 | Edit+Run RAM | `edit_run_action` (édite et exécute à `1000:0000`) | Voir ci-dessus |
+| IVT | `ivt_dump_action` (table des 256 vecteurs) | Voir ci-dessus |
 | (Échap) | — | Retour au menu principal depuis le menu Memory functions (remplace l'ancienne option affichée "9) Home menu") |
 
 État partagé (`VAR_SEG`, voir `include/hardware.inc`) : `edit_ram_action`

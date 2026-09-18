@@ -339,8 +339,13 @@ start:
         jmp     .dump_menu
 .dump_4:
         cmp     al, '4'
-        jne     .dump_esc
+        jne     .dump_5
         call    edit_run_action         ; edite/execute a 1000:0000 - voir plus bas
+        jmp     .dump_menu
+.dump_5:
+        cmp     al, '5'
+        jne     .dump_esc
+        call    ivt_dump_action         ; affiche la table des vecteurs (LCD+UART) - voir plus bas
         jmp     .dump_menu
 .dump_esc:
         cmp     al, 27                  ; Echap: retour au menu principal (remplace
@@ -2513,6 +2518,190 @@ edit_run_execute_and_show:
         ret
 
 ; ============================================================
+; ivt_dump_action
+; Option "5) IVT" du sous-menu Memory functions (voir .dump_menu) -
+; affiche le contenu des 256 vecteurs de l'IVT (INT 00h-FFh):
+;   UART: TOUTE la table d'un coup ("INT xxh -> SSSS:OOOO : nom ->
+;         description"), une seule fois a l'entree - les vecteurs
+;         IMPLEMENTES (int10h_handler/int16h_handler/
+;         irq0_test_handler) en VERT, les autres (en pratique
+;         toujours int_not_implemented) sans couleur.
+;   LCD I2C: grille DEFILANTE (256 vecteurs, 4 visibles a la fois),
+;         "xxh  SSSS:OOOO" par ligne (14 caracteres, bien sous les 20
+;         disponibles - pas de couleur possible sur le LCD) - fleches
+;         HAUT/BAS pour defiler d'un vecteur, Echap pour revenir au
+;         menu. Meme principe que edit_ram_draw_grid (fenetre
+;         defilante, IVT_WINDOW_OFF - voir hardware.inc), mais UN SEUL
+;         vecteur par ligne (pas de colonnes/cases editables - vue
+;         seule, rien a saisir).
+;
+; Identification "implemente/pas implemente": compare l'OFFSET lu
+; dans chaque entree de l'IVT aux adresses des 3 gestionnaires reels
+; connus (int10h_handler/int16h_handler/irq0_test_handler) - le
+; SEGMENT n'est PAS verifie separement (tous les gestionnaires, meme
+; les futurs, vivent dans la meme ROM = CS ecrit par
+; setup_bios_interrupts/init_8259/init_ivt_not_implemented - jamais
+; une autre valeur). Toute autre offset (en pratique, toujours celle
+; de int_not_implemented) est consideree "non implementee".
+; ============================================================
+ivt_dump_action:
+        push    ax
+        push    bx
+        push    cx
+        push    dx
+        push    si
+        push    di
+        push    bp
+        push    es
+
+        call    i2c_lcd_init
+
+        ; --- UART: table complete, une seule fois ---
+        print   txt_ivt_banniere, UART
+        xor     bx, bx                   ; BX = vecteur courant (0-255)
+.uart_loop:
+        xor     ax, ax
+        mov     es, ax
+        mov     di, bx
+        shl     di, 1
+        shl     di, 1                    ; DI = vecteur*4
+        mov     cx, [es:di+2]            ; CX = segment du gestionnaire
+        mov     dx, [es:di]              ; DX = offset du gestionnaire
+
+        print   txt_ivt_int_prefix, UART        ; "INT "
+        mov     al, bl
+        call    uart_tx_hex_byte
+        print   txt_ivt_h_arrow, UART            ; "h -> "
+        mov     ax, cx
+        call    uart_tx_hex_word
+        mov     al, ':'
+        call    uart_tx_byte
+        mov     ax, dx
+        call    uart_tx_hex_word
+        print   txt_ivt_sep, UART                ; " : "
+
+        cmp     dx, int10h_handler
+        jne     .u_not10h
+        print   txt_ivt_10h, UART
+        jmp     .u_line_done
+.u_not10h:
+        cmp     dx, int16h_handler
+        jne     .u_not16h
+        print   txt_ivt_16h, UART
+        jmp     .u_line_done
+.u_not16h:
+        cmp     dx, irq0_test_handler
+        jne     .u_not_irq0
+        print   txt_ivt_irq0, UART
+        jmp     .u_line_done
+.u_not_irq0:
+        print   txt_ivt_not_impl, UART
+.u_line_done:
+        print   txt_crlf, UART
+
+        inc     bx
+        cmp     bx, 256
+        jb      .uart_loop
+
+        ; --- LCD I2C: grille defilante ---
+        mov     ax, VAR_SEG
+        mov     es, ax
+        mov     di, IVT_WINDOW_OFF
+        mov     word [es:di], 0
+
+.redraw:
+        call    i2c_lcd_init
+        mov     bp, IVT_WINDOW_OFF
+        mov     si, [bp]                 ; SI = vecteur du haut de la fenetre
+        xor     bx, bx                   ; BX = ligne visible (0-3)
+.row_loop:
+        mov     ax, si
+        add     ax, bx                   ; AX = numero de vecteur de cette ligne -
+                                          ; survit a tout le reste de l'iteration
+                                          ; (jamais ecrase ci-dessous)
+        mov     di, ax
+        shl     di, 1
+        shl     di, 1                    ; DI = vecteur*4
+        xor     dx, dx
+        mov     es, dx                   ; ES = 0000h (segment de l'IVT)
+        mov     cx, [es:di+2]            ; CX = segment du gestionnaire (survit -
+                                          ; jamais touche par i2c_lcd_*, voir leurs
+                                          ; en-tetes/i2c_lcd_send_byte)
+        mov     dx, [es:di]              ; DX = offset du gestionnaire (survit)
+
+        cmp     bx, 0
+        jne     .row_not0
+        i2c_lcd_goto LCD_LINE1
+        jmp     .row_go
+.row_not0:
+        cmp     bx, 1
+        jne     .row_not1
+        i2c_lcd_goto LCD_LINE2
+        jmp     .row_go
+.row_not1:
+        cmp     bx, 2
+        jne     .row_not2
+        i2c_lcd_goto LCD_LINE3
+        jmp     .row_go
+.row_not2:
+        i2c_lcd_goto LCD_LINE4
+.row_go:
+        call    i2c_lcd_tx_hex_byte      ; AL = vecteur (AX intact - voir plus haut)
+        mov     al, 'h'
+        call    i2c_lcd_data
+        mov     al, ' '
+        call    i2c_lcd_data
+        mov     al, ' '
+        call    i2c_lcd_data
+        mov     ax, cx                   ; AX = segment du gestionnaire
+        call    i2c_lcd_tx_hex_word
+        mov     al, ':'
+        call    i2c_lcd_data
+        mov     ax, dx                   ; AX = offset du gestionnaire
+        call    i2c_lcd_tx_hex_word
+
+        inc     bx
+        cmp     bx, 4
+        jb      .row_loop
+
+.wait_key:
+        call    ps2_get_char
+
+        cmp     al, 27                   ; Echap: retour au menu
+        je      .done
+
+        cmp     al, PS2_KEY_UP
+        jne     .not_up
+        mov     bp, IVT_WINDOW_OFF
+        mov     ax, [bp]
+        cmp     ax, 0
+        je      .wait_key                ; deja au sommet - ignore
+        dec     ax
+        mov     [bp], ax
+        jmp     .redraw
+.not_up:
+        cmp     al, PS2_KEY_DOWN
+        jne     .wait_key                ; touche non pertinente - ignoree
+        mov     bp, IVT_WINDOW_OFF
+        mov     ax, [bp]
+        cmp     ax, 252                  ; 256-4: derniere fenetre valide
+        jae     .wait_key                ; deja au fond - ignore
+        inc     ax
+        mov     [bp], ax
+        jmp     .redraw
+
+.done:
+        pop     es
+        pop     bp
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
+        pop     ax
+        ret
+
+; ============================================================
 ; dump_line
 ; Affiche UNE ligne de 16 octets:
 ;   UART: format complet (adresse/hexa/ascii) - INCHANGE
@@ -3618,6 +3807,16 @@ txt_int_non_implementee: db     27,'[31m','*** Interruption non implementee ***'
 ; ---- IR0 du 8259 (voir init_8259/irq0_test_handler) ----
 txt_irq0_test:          db      27,'[35m','*** IRQ0 declenchee (bouton-poussoir, 8259) ***',27,'[0m',13,10,0
 
+; ---- table des vecteurs (voir ivt_dump_action) ----
+txt_ivt_banniere:       db      27,'[36m',"=== Table des vecteurs d'interruption (IVT) ===",27,'[0m',13,10,13,10,0
+txt_ivt_int_prefix:     db      'INT ', 0
+txt_ivt_h_arrow:        db      'h -> ', 0
+txt_ivt_sep:            db      ' : ', 0
+txt_ivt_10h:            db      27,'[32m',"int10h_handler -> Gestion de l'affichage (LCD I2C/UART)",27,'[0m',0
+txt_ivt_16h:            db      27,'[32m','int16h_handler -> Lecture clavier (non bloquante)',27,'[0m',0
+txt_ivt_irq0:           db      27,'[32m','irq0_test_handler -> Test IRQ0 (bouton-poussoir, 8259)',27,'[0m',0
+txt_ivt_not_impl:       db      'int_not_implemented -> Non implementee',0
+
 txt_auteur:             db      '8088 sur breadboard version 2026',13,10
                         db      'Par Alain Boudreault, aka VE2CUY',13,10
                         db      '--------------------------------',13,10,13,10,0
@@ -3636,6 +3835,7 @@ txt_menu_dump:          db      27,'[36m','--- Menu Memory functions ---',27,'[0
                         db      '2) Edit RAM',13,10
                         db      '3) Registres CPU',13,10
                         db      '4) Edit+Run RAM',13,10
+                        db      '5) IVT',13,10
                         db      '(Echap: retour au menu principal)',13,10,13,10,0
 
 ; ---- invite "Edit RAM" (voir edit_ram_action) ----
