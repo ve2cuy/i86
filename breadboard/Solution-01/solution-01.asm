@@ -2073,11 +2073,12 @@ registers_dump_action:
 ;           retour au menu.
 ;   R/r   - VALIDE (comme Q/q), PUIS EXECUTE le code a 1000:0000 (voir
 ;           edit_run_execute_and_show) et affiche les registres sur
-;           l'UART, puis retour au menu. RECONNUE A TOUT MOMENT, meme
-;           AU MILIEU de la composition d'un octet (voir
-;           edit_run_byte_value) - dans ce cas, le chiffre partiel non
-;           encore valide est ABANDONNE (rien n'est ecrit pour cette
-;           case).
+;           l'UART, PUIS REVIENT A LA FENETRE D'EDITION (PAS au menu -
+;           permet de relancer 'r' sans ressaisir le code). RECONNUE A
+;           TOUT MOMENT, meme AU MILIEU de la composition d'un octet
+;           (voir edit_run_byte_value) - dans ce cas, le chiffre
+;           partiel non encore valide est ABANDONNE (rien n'est ecrit
+;           pour cette case).
 ;   Chiffre hexa - comme edit_ram_action, SAUF qu'Entree n'est PLUS
 ;           NECESSAIRE pour valider un octet COMPLET: le 2e chiffre
 ;           hexa valide et avance AUTOMATIQUEMENT (Entree reste
@@ -2180,6 +2181,8 @@ edit_run_action:
 .commit_and_run:
         call    edit_run_commit_buffer          ; recopie le tampon -> RAM reelle (1000:0000)
         call    edit_run_execute_and_show       ; execute et affiche les registres (UART)
+        jmp     .redraw                          ; retour a la fenetre d'edition (PAS au menu) -
+                                                  ; permet de relancer 'r' sans ressaisir le code
 
 .done:
         pop     es
