@@ -202,6 +202,15 @@ start:
                                          ; ("esprit BIOS" - voir plus bas),
                                          ; par-dessus les 2 entrees concernees
 
+        call    init_8259               ; programme le 8259 (ICW/OCW) et
+                                         ; installe irq0_test_handler sur IR0
+                                         ; - voir plus bas. N'active PAS IF.
+        sti                             ; active les interruptions MATERIELLES
+                                         ; - premiere fois que IF compte
+                                         ; reellement pour ce projet (8259
+                                         ; maintenant configure ET le vecteur
+                                         ; IR0 installe - voir Directives.md)
+
 %ifdef TEST_PS2
         ; --- Test PS/2 (TEST_PS2): boucle infinie qui affiche sur
         ; l'UART le scan code (Set 2, brut) de chaque trame recue du
@@ -3053,6 +3062,105 @@ setup_bios_interrupts:
         ret
 
 ; ============================================================
+; init_8259
+; Initialise le controleur d'interruptions 8259A (CS# = IO.A6./A7,
+; ports PIC_CMD/PIC_DATA = 20h/21h - memes adresses que le PC/XT reel,
+; voir include/hardware.inc et Directives.md) en mode STANDARD PC/XT:
+;   - Declenchement par FRONT (edge-triggered), pas par niveau.
+;   - 8259 UNIQUE (pas de cascade): ICW3 OMISE (jamais envoyee - avec
+;     SNGL=1 dans ICW1, le 8259 n'attend que ICW2 PUIS ICW4).
+;   - Mode 8086/8088 (uPM=1).
+;   - EOI MANUEL (pas d'auto-EOI): plus fiable si plusieurs IRQ sont
+;     en attente - voir irq0_test_handler, qui doit donc envoyer
+;     explicitement un EOI (OCW2) avant de retourner.
+;   - Vecteurs: IR0-IR7 -> INT 08h-0Fh (ICW2 = 08h, meme convention
+;     que le BIOS PC reel - les 3 bits de poids faible du vecteur
+;     final sont fournis automatiquement par le 8259 selon la ligne
+;     IRQ qui a interrompu, PAS calcules ici).
+;
+; Seule IR0 (bouton-poussoir de test, cablee) est DEMASQUEE (OCW1) -
+; IR1-IR7 restent masquees: non cablees pour l'instant (reservees a
+; l'UART/clavier via Arduino, voir Directives.md), potentiellement
+; flottantes et donc bruyantes si demasquees prematurement.
+;
+; Installe aussi irq0_test_handler au vecteur INT 08h (IVT, segment
+; 0000h) - meme motif que setup_bios_interrupts ci-dessus pour INT
+; 10h/16h. N'active PAS les interruptions (IF) elle-meme - voir
+; start:, qui le fait explicitement APRES le retour de cette routine,
+; une fois le 8259 configure ET le vecteur installe.
+; ============================================================
+ICW1_EDGE_SINGLE_ICW4  equ     00010011b       ; D4=1(ICW1) LTIM=0(front)
+                                                 ; SNGL=1(seul, pas d'ICW3)
+                                                 ; IC4=1(ICW4 suit)
+ICW2_VECTOR_BASE       equ     08h             ; IR0-IR7 -> INT 08h-0Fh
+ICW4_8086_MANUAL_EOI   equ     00000001b       ; uPM=1(8086/8088), AEOI=0(manuel)
+PIC_MASK_ONLY_IR0      equ     11111110b       ; OCW1 (IMR): demasque IR0 seulement
+
+init_8259:
+        push    ax
+        push    es
+
+        cli                     ; par precaution - aucune IRQ ne doit
+                                 ; survenir pendant la sequence ICW
+
+        mov     al, ICW1_EDGE_SINGLE_ICW4
+        out     PIC_CMD, al
+        mov     al, ICW2_VECTOR_BASE
+        out     PIC_DATA, al
+        mov     al, ICW4_8086_MANUAL_EOI
+        out     PIC_DATA, al
+
+        mov     al, PIC_MASK_ONLY_IR0
+        out     PIC_DATA, al    ; OCW1 (registre de masque IMR)
+
+        xor     ax, ax
+        mov     es, ax                          ; ES = 0000h (segment de l'IVT)
+        mov     word [es:08h*4], irq0_test_handler
+        mov     word [es:08h*4+2], cs
+
+        pop     es
+        pop     ax
+        ret
+
+; ============================================================
+; irq0_test_handler
+; Gestionnaire de test pour IR0 (8259, vecteur INT 08h) - PREMIERE
+; INTERRUPTION MATERIELLE reelle du projet (jusqu'ici, uniquement des
+; interruptions LOGICIELLES "esprit BIOS" - INT 10h/16h, voir plus
+; haut - qui n'ont jamais besoin du 8259). Declenchee par le
+; bouton-poussoir cable sur IR0.
+;
+; Affiche un message sur l'UART via un appel DIRECT a uart_tx_string
+; (pas la macro "print", qui passe par INT 10h) - meme prudence que
+; int_not_implemented: ce gestionnaire doit rester independant de tout
+; ce qui pourrait lui-meme etre en cause si le mecanisme d'interruption
+; se comporte mal. Envoie ensuite un EOI NON SPECIFIQUE (OCW2 = 20h au
+; port de commande - obligatoire en mode EOI MANUEL, voir init_8259,
+; sinon le 8259 croit IR0 toujours "en service" et ne represente plus
+; jamais cette ligne, ni aucune de priorite egale ou inferieure), puis
+; IRET (restaure FLAGS empilees par le CPU a l'entree - IF y est remis
+; a 1 automatiquement, sans STI explicite ici).
+;
+; PAS de debounce volontairement: un bouton-poussoir mecanique rebondit
+; - PLUSIEURS interruptions par appui/relachement sont attendues pour
+; ce premier test (confirme meme que le mecanisme reagit a chaque
+; front, pas seulement au premier).
+; ============================================================
+irq0_test_handler:
+        push    ax
+        push    si
+
+        mov     si, txt_irq0_test
+        call    uart_tx_string
+
+        mov     al, 20h                 ; OCW2: EOI non specifique
+        out     PIC_CMD, al
+
+        pop     si
+        pop     ax
+        iret
+
+; ============================================================
 ; bios_cursor_ddram
 ; Calcule l'adresse DDRAM (SANS le bit de commande) correspondant a
 ; DH=ligne (0-3) / DL=colonne (0-19) - meme convention 4x20 que
@@ -3506,6 +3614,9 @@ txt_flag_cf_clear:      db      'NC', ' ', 0
 ; ---- gestionnaire par defaut de l'IVT (voir init_ivt_not_implemented/
 ; ---- int_not_implemented) ----
 txt_int_non_implementee: db     27,'[31m','*** Interruption non implementee ***',27,'[0m',13,10,0
+
+; ---- IR0 du 8259 (voir init_8259/irq0_test_handler) ----
+txt_irq0_test:          db      27,'[35m','*** IRQ0 declenchee (bouton-poussoir, 8259) ***',27,'[0m',13,10,0
 
 txt_auteur:             db      '8088 sur breadboard version 2026',13,10
                         db      'Par Alain Boudreault, aka VE2CUY',13,10

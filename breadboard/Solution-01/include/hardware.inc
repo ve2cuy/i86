@@ -34,6 +34,17 @@ PIO         EQU    10000011B
 ; restent TOUJOURS en sortie.
 MASQUE_PIO  EQU    10000010B   ;PORT A ET C EN SORTIE, PORT B EN ENTREE (PS/2)
 
+;*****************
+; CONST. 8259   *
+;*****************
+; CS# du 8259 decode via IO.A6./A7 (NAND 3 entrees) - memes ports que
+; le PC/XT reel (20h/21h). A0 du 8259 (commande/ICW1/OCW2/OCW3 vs
+; donnees/ICW2/ICW4/OCW1=IMR) correspond a l'ecart d'un octet entre
+; PIC_CMD et PIC_DATA, comme PORTA/PORTB/PORTC/PIO ci-dessus pour le
+; 8255 (voir Directives.md pour la discussion du decodage).
+PIC_CMD     EQU    00100000B   ;8259 - registre de commande (ICW1/OCW2/OCW3)
+PIC_DATA    EQU    00100001B   ;8259 - registre de donnees (ICW2/ICW4/OCW1=IMR)
+
 ; --- copie fantome du port A + compteurs de progression du test RAM
 ; --- + etat de l'editeur RAM + tampon d'edition (edit_ram_action,
 ; --- solution-01.asm) + etat de dump_memory_action + curseurs
