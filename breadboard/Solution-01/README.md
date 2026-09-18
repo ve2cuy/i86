@@ -783,6 +783,18 @@ registres qui suit (qui utilise `push`/`pop` pour lire la pile)
 ciblerait une pile invalide — risque inhérent à l'exécution de code
 arbitraire, comme la commande `G` de DEBUG.COM.
 
+`AX`/`BX`/`CX`/`DX`/`SI`/`DI` sont **persistants d'une exécution à
+l'autre** (appuis successifs sur `R`) : restaurés juste avant chaque
+`CALL FAR`, puis re-sauvegardés juste après chaque retour — sans quoi
+ces registres vaudraient ce que le code de menu/clavier exécuté
+*entre* deux appuis sur `R` (lecture du clavier, redessin de la
+grille, etc.) leur aurait laissé, rendant impossible tout test
+cumulatif (ex. `add ax,2` répété, censé incrémenter `AX` à chaque
+exécution). Remis à `0` **une seule fois**, à l'entrée dans une
+nouvelle session d'édition (pas à chaque exécution). `SP`/`BP`/`CS`/
+`DS`/`ES`/`SS`/`FLAGS` ne sont **pas** persistés (affichés tels que
+laissés par la dernière exécution, sans lien avec les précédentes).
+
 **Exemple de test minimal** à saisir à `1000:0000` (2 octets) :
 
 ```

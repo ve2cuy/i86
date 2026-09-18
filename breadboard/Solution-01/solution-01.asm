@@ -2119,6 +2119,23 @@ edit_run_action:
         mov     di, EDIT_SIZE_OFF
         mov     word [es:di], EDIT_RUN_SIZE
 
+        ; --- remet a 0 les registres generaux PERSISTANTS (RUN_REG_*_
+        ; OFF, voir include/hardware.inc et edit_run_execute_and_show)
+        ; - UNE SEULE FOIS ICI, a l'entree dans une NOUVELLE session
+        ; d'edition (pas a chaque execution - voir plus bas). ---
+        mov     di, RUN_REG_AX_OFF
+        mov     word [es:di], 0
+        mov     di, RUN_REG_BX_OFF
+        mov     word [es:di], 0
+        mov     di, RUN_REG_CX_OFF
+        mov     word [es:di], 0
+        mov     di, RUN_REG_DX_OFF
+        mov     word [es:di], 0
+        mov     di, RUN_REG_SI_OFF
+        mov     word [es:di], 0
+        mov     di, RUN_REG_DI_OFF
+        mov     word [es:di], 0
+
         print   txt_run_address, UART
         print   txt_run_help, UART
 
@@ -2359,6 +2376,31 @@ edit_run_byte_value:
 ; ici, contrairement a registers_dump_action).
 ; ============================================================
 edit_run_execute_and_show:
+        ; --- restaure les registres generaux PERSISTANTS (RUN_REG_*_
+        ; OFF, voir include/hardware.inc) - laisses par la PRECEDENTE
+        ; execution (ou remis a 0 par edit_run_action si c'est la
+        ; premiere depuis l'entree dans l'option). Sans cette
+        ; restauration, AX/BX/CX/DX/SI/DI vaudraient ce que le code de
+        ; menu/clavier qui s'execute ENTRE deux appuis sur 'r' (ps2_
+        ; get_char, edit_ram_draw_grid, etc.) leur a laisse - rendant
+        ; impossible tout test CUMULATIF (ex: "add ax,2" repete, cense
+        ; incrementer AX a chaque execution). BP libre ICI (le "push
+        ; bp/mov bp,sp" qui l'ancre a la trame de pile plus bas n'a pas
+        ; encore eu lieu) - [bp] adresse SS (=VAR_SEG en permanence)
+        ; par defaut. ---
+        mov     bp, RUN_REG_AX_OFF
+        mov     ax, [bp]
+        mov     bp, RUN_REG_BX_OFF
+        mov     bx, [bp]
+        mov     bp, RUN_REG_CX_OFF
+        mov     cx, [bp]
+        mov     bp, RUN_REG_DX_OFF
+        mov     dx, [bp]
+        mov     bp, RUN_REG_SI_OFF
+        mov     si, [bp]
+        mov     bp, RUN_REG_DI_OFF
+        mov     di, [bp]
+
         call    1000h:0000h              ; CALL FAR - le code injecte doit finir par RETF
 
         push    bp
@@ -2375,6 +2417,30 @@ edit_run_execute_and_show:
         push    dx                       ; [bp-18] = DX
         push    si                       ; [bp-20] = SI
         push    di                       ; [bp-22] = DI
+
+        ; --- re-persiste les 6 registres generaux (RUN_REG_*_OFF) pour
+        ; la PROCHAINE execution - ICI, AVANT tout usage d'AX comme
+        ; "registre de travail d'affichage" plus bas (qui rendrait leur
+        ; valeur CAPTUREE illisible depuis un registre - seul [bp-N]
+        ; resterait fiable). "[ss:bx]": BX seul adresse DS par defaut
+        ; sur le 8086 (PAS SS comme BP) - le prefixe force SS (=VAR_SEG
+        ; en permanence) SANS sacrifier BP, qui doit rester l'ancre de
+        ; cette trame de pile pour tout le reste de la routine. BX
+        ; lui-meme est relu depuis la pile ([bp-14]) plutot que depuis
+        ; le registre, puisqu'il vient de servir de pointeur. ---
+        mov     bx, RUN_REG_AX_OFF
+        mov     [ss:bx], ax
+        mov     bx, RUN_REG_CX_OFF
+        mov     [ss:bx], cx
+        mov     bx, RUN_REG_DX_OFF
+        mov     [ss:bx], dx
+        mov     bx, RUN_REG_SI_OFF
+        mov     [ss:bx], si
+        mov     bx, RUN_REG_DI_OFF
+        mov     [ss:bx], di
+        mov     ax, [bp-14]              ; AX = BX original (BX vient de servir de pointeur)
+        mov     bx, RUN_REG_BX_OFF
+        mov     [ss:bx], ax
 
         print   txt_run_result_banner, UART
 

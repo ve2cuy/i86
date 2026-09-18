@@ -90,4 +90,20 @@ BIOS_CURSOR_LCD_COL_OFF    equ 0FC18h  ; LCD parallele: colonne courante (0-19)
 BIOS_CURSOR_LCDI2C_ROW_OFF equ 0FC19h  ; LCD I2C: ligne courante (0-3)
 BIOS_CURSOR_LCDI2C_COL_OFF equ 0FC1Ah  ; LCD I2C: colonne courante (0-19)
 
+; --- registres GENERAUX persistants d'edit_run_action (solution-01.asm):
+; --- restaures juste AVANT chaque "call 1000h:0000h" et resauvegardes
+; --- juste APRES son retour (RETF) - sans cette persistance, AX/BX/CX/
+; --- DX/SI/DI seraient ecrases entre deux appuis sur 'r' par le code de
+; --- menu/clavier qui s'execute entre-temps (edit_ram_draw_grid,
+; --- ps2_get_char, etc.), rendant impossible tout test CUMULATIF (ex:
+; --- "add ax,2" repete, cense incrementer AX a chaque execution).
+; --- Remis a 0 UNE SEULE FOIS, a l'entree dans edit_run_action (nouvelle
+; --- session d'edition) - voir edit_run_action/edit_run_execute_and_show. ---
+RUN_REG_AX_OFF      equ 0FC1Bh  ; (mot)
+RUN_REG_BX_OFF      equ 0FC1Dh  ; (mot)
+RUN_REG_CX_OFF      equ 0FC1Fh  ; (mot)
+RUN_REG_DX_OFF      equ 0FC21h  ; (mot)
+RUN_REG_SI_OFF      equ 0FC23h  ; (mot)
+RUN_REG_DI_OFF      equ 0FC25h  ; (mot)
+
 %endif ; HARDWARE_INC
