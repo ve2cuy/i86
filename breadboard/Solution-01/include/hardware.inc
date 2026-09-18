@@ -118,10 +118,11 @@ RUN_REG_SI_OFF      equ 0FC23h  ; (mot)
 RUN_REG_DI_OFF      equ 0FC25h  ; (mot)
 
 ; --- fenetre visible de ivt_dump_action (solution-01.asm): numero du
-; --- PREMIER (des 256) vecteur affiche sur la ligne 1 du LCD I2C,
-; --- 0-252 (les 4 lignes visibles couvrent donc au plus 252-255) -
-; --- memes principe que EDIT_WINDOW_ROW_OFF, mais un seul vecteur par
-; --- ligne (pas de colonnes). Remise a 0 a chaque entree dans l'action. ---
+; --- PREMIER vecteur affiche sur la ligne 1 du LCD I2C, parmi les
+; --- IVT_DUMP_COUNT (40) premiers vecteurs affiches (0-36, voir
+; --- IVT_WINDOW_MAX) - memes principe que EDIT_WINDOW_ROW_OFF, mais
+; --- un seul vecteur par ligne (pas de colonnes). Remise a 0 a chaque
+; --- entree dans l'action. ---
 IVT_WINDOW_OFF      equ 0FC27h  ; (mot)
 
 %endif ; HARDWARE_INC

@@ -559,13 +559,17 @@ disponible via `2) Memory functions` ci-dessous) :
 5) IVT
 ```
 
-⚠️ Le LCD I2C n'a que 4 lignes : il n'affiche toujours que les options
-1-4 (comme avant l'ajout de `5) IVT`) — l'option `5` reste
-fonctionnelle au clavier, seulement pas listée sur l'écran, même
-convention que l'ancienne option "`9) Home menu`" (voir plus bas).
+Le LCD I2C n'a que 4 lignes : depuis l'ajout de `5) IVT`, ce menu se
+**pagine sur 2 écrans** (Gauche/Droite pour basculer, comme le fait
+déjà `Registres CPU` — indicateur `1/2`/`2/2` en haut à droite de la
+première ligne) : page 1 = options 1-4 (inchangée), page 2 = option 5
+seule. L'UART, lui, affiche toujours les 5 options d'un coup (pas de
+contrainte de largeur/hauteur), une seule fois à l'entrée dans ce
+menu — pas à chaque bascule de page LCD.
 
 La touche **Échap** (non affichée à l'écran, remplace l'ancienne
-option "`9) Home menu`") retourne directement au menu principal.
+option "`9) Home menu`") retourne directement au menu principal,
+depuis n'importe quelle page.
 
 **Dump memory** (option 1 du menu Memory functions) : demande une adresse de
 **départ** puis une adresse de **fin**, chacune saisie au format
@@ -819,9 +823,13 @@ les restaurer explicitement avant `RETF` :
   franchement (ex. `mov sp, ...`) seulement si ce cas précis est
   volontairement celui testé.
 
-**IVT** (option 5 du menu Memory functions — `ivt_dump_action`, non
-listée sur le LCD, voir plus haut) : affiche le contenu des 256
-vecteurs de l'IVT (`INT 00h`-`FFh`).
+**IVT** (option 5 du menu Memory functions — `ivt_dump_action`, page 2
+du LCD, voir plus haut) : affiche le contenu des **40 premiers**
+vecteurs de l'IVT (`INT 00h`-`27h`, `IVT_DUMP_COUNT`) — limite
+volontaire : les vecteurs qui comptent dans ce projet (`00h`-`1Fh`
+réservés Intel, `08h` IR0/8259, `10h`/`16h` "esprit BIOS") vivent tous
+sous 40 ; le reste de la table jusqu'à `FFh` ne serait qu'une longue
+répétition de `int_not_implemented`.
 
 Sur l'UART, toute la table d'un coup, une seule fois à l'entrée :
 
@@ -837,7 +845,7 @@ L'identification compare l'**offset** lu dans chaque entrée de l'IVT
 aux adresses des 3 gestionnaires réels connus — le segment n'est pas
 vérifié séparément (tous les gestionnaires vivent dans la même ROM).
 
-Sur le LCD I2C, une grille **défilante** (256 vecteurs, 4 visibles à la
+Sur le LCD I2C, une grille **défilante** (40 vecteurs, 4 visibles à la
 fois, un par ligne — pas de couleur possible) :
 
 ```

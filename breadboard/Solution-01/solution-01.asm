@@ -309,19 +309,52 @@ start:
         call    effet1                  ; animation Port C (chenillard)
         jmp     .main_menu
 
+; --- Menu Memory functions: 5 options, mais le LCD (4 lignes) ne peut
+; en montrer que 4 a la fois - PAGINE sur 2 ecrans (Gauche/Droite pour
+; basculer, comme registers_dump_action - reutilise directement ses
+; etiquettes txt_lcd_page1/page2, generiques). L'UART, lui, montre
+; TOUJOURS les 5 options d'un coup (pas de contrainte de largeur/
+; hauteur) - imprime UNE SEULE FOIS a l'entree, pas a chaque bascule
+; de page LCD. SI = page LCD courante (0/1), meme motif que
+; registers_dump_action - JAMAIS touche par gotoxy/print/ps2_get_char
+; (tous le preservent), et par convention chaque action appelee
+; ci-dessous (dump_memory_action etc.) restaure SI a sa valeur
+; d'entree - mais la page est de toute facon remise a 0 a CHAQUE
+; retour dans .dump_menu (voir "xor si,si" ci-dessous): plus simple et
+; plus previsible qu'un etat qui "survivrait" a une action. ---
 .dump_menu:
+        print   txt_menu_dump, UART      ; liste complete (1-5), une seule fois
+        xor     si, si                   ; page LCD = 0 (page 1)
+.dump_redraw:
         call    i2c_lcd_init
-        print   txt_menu_dump, UART
+        cmp     si, 0
+        je      .dump_page1
+        jmp     .dump_page2
+.dump_page1:
         gotoxy  0, 0, LCDI2C
         print   lcd_txt_menu_dump_l1, LCDI2C
+        gotoxy  0, 17, LCDI2C
+        print   txt_lcd_page1, LCDI2C
         gotoxy  1, 0, LCDI2C
         print   lcd_txt_menu_dump_l2, LCDI2C
         gotoxy  2, 0, LCDI2C
         print   lcd_txt_menu_dump_l3, LCDI2C
         gotoxy  3, 0, LCDI2C
         print   lcd_txt_menu_dump_l4, LCDI2C
+        jmp     .dump_wait_key
+.dump_page2:
+        gotoxy  0, 0, LCDI2C
+        print   lcd_txt_menu_dump_l5, LCDI2C
+        gotoxy  0, 17, LCDI2C
+        print   txt_lcd_page2, LCDI2C
 
+.dump_wait_key:
         call    ps2_get_char
+
+        cmp     al, PS2_KEY_LEFT
+        je      .dump_toggle_page
+        cmp     al, PS2_KEY_RIGHT
+        je      .dump_toggle_page
 
         cmp     al, '1'
         jne     .dump_2
@@ -349,8 +382,12 @@ start:
         jmp     .dump_menu
 .dump_esc:
         cmp     al, 27                  ; Echap: retour au menu principal (remplace
-        jne     .dump_menu              ; l'ancienne option "9) Home menu", non
-        jmp     .main_menu              ; affichee - touche non reconnue: redessine le menu
+        jne     .dump_redraw            ; l'ancienne option "9) Home menu", non
+        jmp     .main_menu              ; affichee - touche non reconnue: reste sur
+                                         ; la meme page LCD (pas de reinitialisation)
+.dump_toggle_page:
+        xor     si, 1                   ; bascule 0<->1 (page 1 <-> page 2)
+        jmp     .dump_redraw
 
 ; ============================================================
 ; test_ram
@@ -2520,13 +2557,18 @@ edit_run_execute_and_show:
 ; ============================================================
 ; ivt_dump_action
 ; Option "5) IVT" du sous-menu Memory functions (voir .dump_menu) -
-; affiche le contenu des 256 vecteurs de l'IVT (INT 00h-FFh):
-;   UART: TOUTE la table d'un coup ("INT xxh -> SSSS:OOOO : nom ->
-;         description"), une seule fois a l'entree - les vecteurs
-;         IMPLEMENTES (int10h_handler/int16h_handler/
+; affiche le contenu des IVT_DUMP_COUNT (40) PREMIERS vecteurs de
+; l'IVT (INT 00h-27h) - limite volontaire (demande explicite): les
+; vecteurs interessants de ce projet (00h-1Fh reserves Intel, 08h
+; IR0/8259, 10h/16h "esprit BIOS") vivent tous sous 40, le reste de la
+; table (jusqu'a FFh) n'etant que des repetitions de
+; int_not_implemented sans interet a parcourir:
+;   UART: TOUTE la plage (40 vecteurs) d'un coup ("INT xxh ->
+;         SSSS:OOOO : nom -> description"), une seule fois a l'entree
+;         - les vecteurs IMPLEMENTES (int10h_handler/int16h_handler/
 ;         irq0_test_handler) en VERT, les autres (en pratique
 ;         toujours int_not_implemented) sans couleur.
-;   LCD I2C: grille DEFILANTE (256 vecteurs, 4 visibles a la fois),
+;   LCD I2C: grille DEFILANTE (40 vecteurs, 4 visibles a la fois),
 ;         "xxh  SSSS:OOOO" par ligne (14 caracteres, bien sous les 20
 ;         disponibles - pas de couleur possible sur le LCD) - fleches
 ;         HAUT/BAS pour defiler d'un vecteur, Echap pour revenir au
@@ -2544,6 +2586,9 @@ edit_run_execute_and_show:
 ; une autre valeur). Toute autre offset (en pratique, toujours celle
 ; de int_not_implemented) est consideree "non implementee".
 ; ============================================================
+IVT_DUMP_COUNT   equ     40      ; nombre de vecteurs affiches (0 a 39)
+IVT_WINDOW_MAX   equ     IVT_DUMP_COUNT - 4   ; derniere fenetre LCD valide (36)
+
 ivt_dump_action:
         push    ax
         push    bx
@@ -2556,9 +2601,9 @@ ivt_dump_action:
 
         call    i2c_lcd_init
 
-        ; --- UART: table complete, une seule fois ---
+        ; --- UART: plage complete (0 a IVT_DUMP_COUNT-1), une seule fois ---
         print   txt_ivt_banniere, UART
-        xor     bx, bx                   ; BX = vecteur courant (0-255)
+        xor     bx, bx                   ; BX = vecteur courant (0 a IVT_DUMP_COUNT-1)
 .uart_loop:
         xor     ax, ax
         mov     es, ax
@@ -2600,7 +2645,7 @@ ivt_dump_action:
         print   txt_crlf, UART
 
         inc     bx
-        cmp     bx, 256
+        cmp     bx, IVT_DUMP_COUNT
         jb      .uart_loop
 
         ; --- LCD I2C: grille defilante ---
@@ -2684,7 +2729,7 @@ ivt_dump_action:
         jne     .wait_key                ; touche non pertinente - ignoree
         mov     bp, IVT_WINDOW_OFF
         mov     ax, [bp]
-        cmp     ax, 252                  ; 256-4: derniere fenetre valide
+        cmp     ax, IVT_WINDOW_MAX       ; derniere fenetre valide
         jae     .wait_key                ; deja au fond - ignore
         inc     ax
         mov     [bp], ax
@@ -3808,7 +3853,7 @@ txt_int_non_implementee: db     27,'[31m','*** Interruption non implementee ***'
 txt_irq0_test:          db      27,'[35m','*** IRQ0 declenchee (bouton-poussoir, 8259) ***',27,'[0m',13,10,0
 
 ; ---- table des vecteurs (voir ivt_dump_action) ----
-txt_ivt_banniere:       db      27,'[36m',"=== Table des vecteurs d'interruption (IVT) ===",27,'[0m',13,10,13,10,0
+txt_ivt_banniere:       db      27,'[36m',"=== Table des vecteurs d'interruption (IVT, INT 00h-27h) ===",27,'[0m',13,10,13,10,0
 txt_ivt_int_prefix:     db      'INT ', 0
 txt_ivt_h_arrow:        db      'h -> ', 0
 txt_ivt_sep:            db      ' : ', 0
@@ -3882,15 +3927,19 @@ lcd_text lcd_txt_menu_main_l1, '1) Test RAM', 20
 lcd_text lcd_txt_menu_main_l2, '2) Memory functions', 20
 lcd_text lcd_txt_menu_main_l3, '3) LED Show on PC', 20
 
-; ---- menu Memory functions (voir start:) - les 4 lignes sont
-; ---- utilisees depuis l'ajout de l'option "3) Registres CPU"; "9)
-; ---- Home menu" a ete remplacee par "4) Edit+Run RAM" - Echap (non
-; ---- affiche a l'ecran) fait maintenant office de retour au menu
-; ---- principal ----
+; ---- menu Memory functions (voir .dump_menu, start:) - PAGINE sur 2
+; ---- ecrans LCD depuis l'ajout de "5) IVT" (Gauche/Droite pour
+; ---- basculer, comme registers_dump_action - voir txt_lcd_page1/
+; ---- page2): page 1 = options 1-4 (lignes 1-4, "1/2" en haut a
+; ---- droite de la ligne 1), page 2 = option 5 seule (ligne 1
+; ---- seulement, "2/2" en haut a droite). Echap (non affiche a
+; ---- l'ecran) fait office de retour au menu principal, sur les 2
+; ---- pages ----
 lcd_text lcd_txt_menu_dump_l1, '1) Dump memory', 20
 lcd_text lcd_txt_menu_dump_l2, '2) Edit RAM', 20
 lcd_text lcd_txt_menu_dump_l3, '3) Registres CPU', 20
 lcd_text lcd_txt_menu_dump_l4, '4) Edit+Run RAM', 20
+lcd_text lcd_txt_menu_dump_l5, '5) IVT', 20
 
 ; ---- registres CPU (voir registers_dump_action) - prefixes courts
 ; ---- (LCD 4x20, contrairement aux prefixes UART txt_reg_* qui
