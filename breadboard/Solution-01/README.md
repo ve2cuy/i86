@@ -697,15 +697,24 @@ juste après ce `CALL`. `SP` affiché = celui vu par l'appelant, *avant*
 ce `CALL` (`BP+4` : avant que `CALL` empile `IP` et avant notre propre
 `push bp`) — un simple calcul, jamais relu depuis la pile.
 
-L'UART affiche tout d'un coup, format inspiré de **DEBUG.COM** (le
-débogueur DOS classique), avec les `FLAGS` décodés en mnémoniques
-(`OV`/`NV`, `DN`/`UP`, `EI`/`DI`, `NG`/`PL`, `ZR`/`NZ`, `AC`/`NA`,
-`PE`/`PO`, `CY`/`NC` — dans l'ordre `OF DF IF SF ZF AF PF CF`, le
-mnémonique « actif » en jaune) :
+L'UART affiche chaque registre en **hexadécimal PUIS en binaire**
+(`uart_tx_bin_word`), 2 registres par ligne (format inspiré de
+**DEBUG.COM**, le débogueur DOS classique, étendu avec le binaire).
+Les `FLAGS` ont leur **propre ligne** (après une ligne vide), avec
+hexadécimal, binaire, **et** mnémoniques (`OV`/`NV`, `DN`/`UP`,
+`EI`/`DI`, `NG`/`PL`, `ZR`/`NZ`, `AC`/`NA`, `PE`/`PO`, `CY`/`NC` — dans
+l'ordre `OF DF IF SF ZF AF PF CF`, le mnémonique « actif » en jaune) :
 
 ```
-AX=0033  BX=0000  CX=0006  DX=0000  SP=0FFC  BP=0000  SI=0000  DI=0000
-DS=1000  ES=1000  SS=1000  CS=C000  IP=0242  FLAGS=0246  NV UP EI PL NZ NA PO NC
+AX=0033  0000000000110011    BX=0000  0000000000000000
+CX=0006  0000000000000110    DX=0000  0000000000000000
+SI=0000  0000000000000000    DI=0000  0000000000000000
+SP=0FFC  0000111111111100    BP=0000  0000000000000000
+DS=1000  0001000000000000    ES=1000  0001000000000000
+SS=1000  0001000000000000    CS=C000  1100000000000000
+IP=0242  0000001001000010
+
+FLAGS=0246  0000001001000110  NV UP EI PL NZ NA PO NC
 ```
 
 Le LCD (80 caractères, trop peu pour tout à la fois) **pagine sur 2

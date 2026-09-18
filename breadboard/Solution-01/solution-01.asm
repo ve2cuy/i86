@@ -1541,6 +1541,28 @@ edit_ram_advance:
         ret
 
 ; ============================================================
+; print_reg_hex_bin_uart
+; Affiche AX en hexadecimal PUIS en binaire sur l'UART, separes par 2
+; espaces ("HHHH  BBBBBBBBBBBBBBBB") - le libelle ("AX=" etc.) doit
+; deja avoir ete affiche par l'appelant au prealable (voir
+; registers_dump_action, qui utilise la macro "print" pour ca).
+; Entree: AX = valeur a afficher.
+; Detruit: AX, BX (voir uart_tx_hex_word/uart_tx_bin_word). Jamais
+; CX/DX/SI/DI/ES/BP.
+; ============================================================
+print_reg_hex_bin_uart:
+        push    ax                   ; uart_tx_hex_word DETRUIT AX - sauvegarde
+                                      ; pour l'affichage binaire qui suit
+        call    uart_tx_hex_word
+        mov     al, ' '
+        call    uart_tx_byte
+        mov     al, ' '
+        call    uart_tx_byte
+        pop     ax
+        call    uart_tx_bin_word
+        ret
+
+; ============================================================
 ; registers_dump_action
 ; Option "3) Registres CPU" du sous-menu Dump memory (voir
 ; .dump_menu, start:): affiche l'etat courant des registres du 8088
@@ -1611,62 +1633,85 @@ registers_dump_action:
         call    lcd_init                 ; ecran LCD propre pour cet affichage
 
         ; ---------------------------------------------------------
-        ; UART: tout d'un coup - "AX=.. BX=.. .. DI=.." puis
-        ; "DS=.. ES=.. SS=.. CS=.. IP=.. FLAGS=xxxx  <mnemoniques>"
-        ; (voir txt_reg_*/txt_flag_*_set/clear, section donnees)
+        ; UART: chaque registre affiche en HEXADECIMAL PUIS EN
+        ; BINAIRE ("AX=HHHH  BBBBBBBBBBBBBBBB"), 2 registres par
+        ; ligne (voir print_reg_hex_bin_uart). FLAGS a part, sur SA
+        ; PROPRE ligne (hexa + binaire + mnemoniques), apres une ligne
+        ; vide de separation - voir txt_reg_*/txt_flag_*_set/clear,
+        ; section donnees.
         ; ---------------------------------------------------------
         print   txt_reg_banniere, UART
 
         print   txt_reg_ax, UART
         mov     ax, [bp-12]
-        call    uart_tx_hex_word
+        call    print_reg_hex_bin_uart
+        print   txt_reg_pair_sep, UART
         print   txt_reg_bx, UART
         mov     ax, [bp-14]
-        call    uart_tx_hex_word
+        call    print_reg_hex_bin_uart
+        print   txt_crlf, UART
+
         print   txt_reg_cx, UART
         mov     ax, [bp-16]
-        call    uart_tx_hex_word
+        call    print_reg_hex_bin_uart
+        print   txt_reg_pair_sep, UART
         print   txt_reg_dx, UART
         mov     ax, [bp-18]
-        call    uart_tx_hex_word
+        call    print_reg_hex_bin_uart
+        print   txt_crlf, UART
+
+        print   txt_reg_si, UART
+        mov     ax, [bp-20]
+        call    print_reg_hex_bin_uart
+        print   txt_reg_pair_sep, UART
+        print   txt_reg_di, UART
+        mov     ax, [bp-22]
+        call    print_reg_hex_bin_uart
+        print   txt_crlf, UART
+
         print   txt_reg_sp, UART
         mov     ax, bp
         add     ax, 4                    ; SP vu par l'appelant (voir en-tete)
-        call    uart_tx_hex_word
+        call    print_reg_hex_bin_uart
+        print   txt_reg_pair_sep, UART
         print   txt_reg_bp, UART
         mov     ax, [bp+0]
-        call    uart_tx_hex_word
-        print   txt_reg_si, UART
-        mov     ax, [bp-20]
-        call    uart_tx_hex_word
-        print   txt_reg_di, UART
-        mov     ax, [bp-22]
-        call    uart_tx_hex_word
+        call    print_reg_hex_bin_uart
         print   txt_crlf, UART
 
         print   txt_reg_ds, UART
         mov     ax, [bp-8]
-        call    uart_tx_hex_word
+        call    print_reg_hex_bin_uart
+        print   txt_reg_pair_sep, UART
         print   txt_reg_es, UART
         mov     ax, [bp-6]
-        call    uart_tx_hex_word
+        call    print_reg_hex_bin_uart
+        print   txt_crlf, UART
+
         print   txt_reg_ss, UART
         mov     ax, [bp-4]
-        call    uart_tx_hex_word
+        call    print_reg_hex_bin_uart
+        print   txt_reg_pair_sep, UART
         print   txt_reg_cs, UART
         mov     ax, [bp-10]
-        call    uart_tx_hex_word
+        call    print_reg_hex_bin_uart
+        print   txt_crlf, UART
+
         print   txt_reg_ip, UART
         mov     ax, [bp+2]
-        call    uart_tx_hex_word
+        call    print_reg_hex_bin_uart
+        print   txt_crlf, UART
+        print   txt_crlf, UART          ; ligne vide avant FLAGS (voir en-tete)
+
+        ; --- FLAGS SEUL sur sa ligne: hexa, binaire, PUIS mnemoniques
+        ; (ordre DEBUG.COM: OF DF IF SF ZF AF PF CF) - DX charge UNE
+        ; FOIS pour les 8 invocations de uart_flag_bit (voir sa
+        ; definition, section macros) ---
         print   txt_reg_flags_prefix, UART
         mov     ax, [bp-2]
-        call    uart_tx_hex_word
+        call    print_reg_hex_bin_uart
         print   txt_reg_flags_sep, UART
 
-        ; --- decodage FLAGS (ordre DEBUG.COM: OF DF IF SF ZF AF PF
-        ; CF) - DX charge UNE FOIS pour les 8 invocations de
-        ; uart_flag_bit (voir sa definition, section macros) ---
         mov     dx, [bp-2]
         uart_flag_bit 0800h, txt_flag_of_set, txt_flag_of_clear
         uart_flag_bit 0400h, txt_flag_df_set, txt_flag_df_clear
@@ -2893,24 +2938,29 @@ txt_dump_invalid_range: db      27,'[31m','*** Adresse de fin < adresse de depar
 txt_dump_interrupted:   db      27,'[33m','*** Dump interrompu (Echap) ***',27,'[0m',13,10,13,10,0
 
 ; ---- registres CPU (voir registers_dump_action) - affichage UART,
-; ---- format "DEBUG.COM": "AX=.. BX=.. CX=.. DX=.. SP=.. BP=.. SI=..
-; ---- DI=.." puis "DS=.. ES=.. SS=.. CS=.. IP=.. FLAGS=xxxx  " suivi
-; ---- des 8 mnemoniques de FLAGS (txt_flag_*_set/clear plus bas) ----
+; ---- format "DEBUG.COM" etendu (hexa + BINAIRE - voir
+; ---- print_reg_hex_bin_uart), 2 registres par ligne: "AX=.. BX=.."
+; ---- / "CX=.. DX=.." / "SI=.. DI=.." / "SP=.. BP=.." / "DS=.. ES=.."
+; ---- / "SS=.. CS=.." / "IP=..", puis FLAGS SEUL sur sa ligne
+; ---- ("FLAGS=xxxx  " suivi des 8 mnemoniques, txt_flag_*_set/clear
+; ---- plus bas) ----
 txt_reg_banniere:       db      27,'[34m','=== Registres CPU (8088) ===',27,'[0m',13,10,0
 txt_reg_ax:             db      'AX=', 0
-txt_reg_bx:             db      '  BX=', 0
-txt_reg_cx:             db      '  CX=', 0
-txt_reg_dx:             db      '  DX=', 0
-txt_reg_sp:             db      '  SP=', 0
-txt_reg_bp:             db      '  BP=', 0
-txt_reg_si:             db      '  SI=', 0
-txt_reg_di:             db      '  DI=', 0
+txt_reg_bx:             db      'BX=', 0
+txt_reg_cx:             db      'CX=', 0
+txt_reg_dx:             db      'DX=', 0
+txt_reg_sp:             db      'SP=', 0
+txt_reg_bp:             db      'BP=', 0
+txt_reg_si:             db      'SI=', 0
+txt_reg_di:             db      'DI=', 0
 txt_reg_ds:             db      'DS=', 0
-txt_reg_es:             db      '  ES=', 0
-txt_reg_ss:             db      '  SS=', 0
-txt_reg_cs:             db      '  CS=', 0
-txt_reg_ip:             db      '  IP=', 0
-txt_reg_flags_prefix:   db      '  FLAGS=', 0
+txt_reg_es:             db      'ES=', 0
+txt_reg_ss:             db      'SS=', 0
+txt_reg_cs:             db      'CS=', 0
+txt_reg_ip:             db      'IP=', 0
+txt_reg_pair_sep:       db      '    ', 0       ; separateur entre 2 registres
+                                                 ; sur la meme ligne UART
+txt_reg_flags_prefix:   db      'FLAGS=', 0
 txt_reg_flags_sep:      db      '  ', 0
 
 ; ---- mnemoniques FLAGS (convention DEBUG.COM: OV/NV=overflow,

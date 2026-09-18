@@ -123,4 +123,31 @@ def_tx_hex_nibble uart_tx_hex_nibble, uart_tx_byte
 def_tx_hex_byte   uart_tx_hex_byte,   uart_tx_hex_nibble
 def_tx_hex_word   uart_tx_hex_word,   uart_tx_hex_byte
 
+; ============================================================
+; uart_tx_bin_word
+; Affiche AX en binaire (16 caracteres '0'/'1', MSB en premier) via
+; l'UART - utilisee par registers_dump_action (solution-01.asm) pour
+; completer l'affichage hexadecimal des registres.
+; Entree: AX = mot a afficher.
+; Detruit AX et BX (jamais CX/DX/SI/DI/ES/BP - meme discipline que
+; uart_tx_hex_*, sauf que CX sert ici de compteur de boucle et doit
+; donc etre explicitement sauvegarde/restaure).
+; ============================================================
+uart_tx_bin_word:
+        push    cx
+        mov     bx, ax          ; BX = copie du mot (AL/AH servent de scratch
+                                 ; pour chaque caractere emis, un a la fois)
+        mov     cx, 16          ; 16 bits a afficher
+.bit_loop:
+        mov     al, '0'
+        test    bx, 8000h       ; teste le bit de poids fort courant
+        jz      .bit_zero
+        mov     al, '1'
+.bit_zero:
+        call    uart_tx_byte
+        shl     bx, 1           ; le bit suivant devient le poids fort
+        loop    .bit_loop
+        pop     cx
+        ret
+
 %endif ; UART_ASM
